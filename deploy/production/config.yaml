@@ -1,0 +1,122 @@
+# ============================================================================
+# HiveMind Production Configuration — 1,000 concurrent users
+# ============================================================================
+# Sizing rationale:
+#   - 1k users ≈ ~200 concurrent rooms (avg 5 peers/room)
+#   - Peak inference load ≈ 500 req/s (burst)
+#   - Sustained inference load ≈ 100-200 req/s
+#   - Tensor transfers ≈ 50-100 concurrent streams
+#   - Memory footprint: ~2GB base + ~500MB per active room
+# ============================================================================
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+  # Token bucket: 500 req/s per IP handles burst from 1k users
+  rate_limit: 500
+  # 50MB max body for large tensor payloads
+  max_body_bytes: 52428800
+  # Read/write timeouts prevent slow-loris and hanging connections
+  read_timeout_s: 30
+  write_timeout_s: 120
+  idle_timeout_s: 120
+  # Graceful shutdown window
+  shutdown_timeout_s: 30
+
+room:
+  # 200 rooms × 5 peers = 1,000 users
+  max_peers: 10
+  max_rooms: 500
+  auto_approve: false
+  invite_length: 16
+  # Evict idle rooms after 1 hour
+  idle_timeout_m: 60
+  # Heartbeat interval for peer liveness
+  heartbeat_interval_s: 10
+  heartbeat_timeout_s: 30
+
+worker:
+  grpc_port: 50051
+  health_interval_s: 5
+  max_restarts: 5
+  # Worker process pool for inference requests
+  pool_size: 4
+  # Max concurrent inference requests per worker
+  max_concurrent: 8
+  # GPU memory reservation (MB) — leave headroom for OS
+  gpu_memory_reserve_mb: 512
+
+mesh:
+  # WireGuard mesh networking
+  wireguard_port: 51820
+  subnet: "10.42.0.0/16"
+  # /16 supports up to 65,534 peers
+  mtu: 1420
+  keepalive_s: 25
+  # Signaling server for NAT traversal
+  signaling_url: "${HIVEMIND_SIGNALING_URL}"
+  # STUN servers for ICE candidates
+  stun_servers:
+    - "stun:stun.l.google.com:19302"
+    - "stun:stun1.l.google.com:19302"
+
+tensor:
+  # Compression for tensor transfers
+  compression_enabled: true
+  compression_level: 3
+  # Minimum size to trigger compression (bytes)
+  compression_threshold: 1024
+  # Max message size for gRPC tensor transfer (256MB)
+  max_message_size: 268435456
+  # Stream chunk size (1MB)
+  chunk_size: 1048576
+  # Transfer timeout per chunk
+  chunk_timeout_s: 30
+
+resilience:
+  # Circuit breaker per peer
+  circuit_breaker:
+    max_failures: 5
+    reset_timeout_s: 60
+    half_open_max_requests: 3
+  # Health monitoring
+  health_monitor:
+    check_interval_s: 5
+    max_consecutive_failures: 3
+    latency_ema_alpha: 0.3
+  # Retry policy for inference requests
+  retry:
+    max_attempts: 3
+    backoff_base_ms: 500
+    backoff_max_ms: 5000
+  # Leader election
+  leader_election:
+    enabled: true
+    strategy: "lowest_ip"
+  # Adaptive timeout
+  timeout:
+    min_s: 5
+    max_s: 60
+    multiplier: 3.0
+
+metrics:
+  enabled: true
+  # Keep last N durations for percentile calculation
+  duration_window: 5000
+  # Expose Prometheus-compatible metrics
+  prometheus_enabled: true
+  prometheus_path: "/metrics"
+
+log:
+  level: "info"
+  # JSON format for structured log aggregation (ELK, Loki, etc.)
+  format: "json"
+  # Include caller info for debugging
+  add_source: false
+
+# TLS configuration (terminate at load balancer or enable here)
+tls:
+  enabled: false
+  cert_file: ""
+  key_file: ""
+  # auto_cert: true  # future: automatic Let's Encrypt

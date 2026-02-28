@@ -1,0 +1,57 @@
+# ============================================================================
+# HiveMind systemd service — bare metal deployment
+# ============================================================================
+# Install:
+#   sudo cp hivemind.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hivemind
+# ============================================================================
+
+[Unit]
+Description=HiveMind Distributed AI Inference
+Documentation=https://github.com/JohnPitter/hivemind
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=hivemind
+Group=hivemind
+ExecStart=/usr/local/bin/hivemind serve --config /etc/hivemind/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/hivemind /var/log/hivemind
+
+# Resource limits for 1k users
+LimitNOFILE=65535
+LimitNPROC=4096
+MemoryMax=8G
+CPUQuota=400%
+
+# Environment
+Environment=HIVEMIND_LOG_FORMAT=json
+Environment=HIVEMIND_LOG_LEVEL=info
+EnvironmentFile=-/etc/hivemind/env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hivemind
+
+[Install]
+WantedBy=multi-user.target

@@ -5,6 +5,24 @@ All notable changes to HiveMind will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-27
+
+### Production Deployment + CI/CD
+
+#### Added
+- `.github/workflows/ci.yml` — GitHub Actions CI: build, test (with race detector + coverage), lint (go vet) — status checks required for master branch protection
+- `Dockerfile` — Multi-stage production build: Node 20 web build → Go static binary → scratch image (~25MB), version injection from git tags
+- `.dockerignore` — Excludes .git, node_modules, deploy, docs from Docker context
+- `deploy/production/config.yaml` — Production configuration for 1,000 concurrent users: 500 req/s rate limit, 50MB tensor body limit, /16 mesh subnet (65k peers), circuit breaker tuning, JSON logging, zstd compression
+- `deploy/production/docker-compose.yml` — Full production stack: nginx (load balancer) → 2× hivemind (GPU-enabled) → redis (session/room state), health checks, resource limits, NVIDIA runtime
+- `deploy/production/nginx.conf` — Reverse proxy: least-conn upstream balancing, SSE streaming support for chat, tiered rate limiting (inference 10r/s, API 50r/s, general 100r/s), TLS 1.2/1.3, security headers, gzip, JSON access logs, /metrics restricted to internal networks
+- `deploy/production/hivemind.service` — systemd service unit: security hardening (NoNewPrivileges, ProtectSystem, PrivateTmp), 65535 file descriptor limit, 8GB memory cap, auto-restart on failure
+- `deploy/production/deploy.sh` — Deploy script: up/down/restart/logs/status/scale commands, prerequisite checks, color output, health check verification
+- `deploy/production/env.example` — Environment variable template for production secrets
+
+#### Changed
+- Branch protection enabled on `master`: requires PR with 1 approval, dismiss stale reviews, status checks (build + test) must pass
+
 ## [0.7.0] - 2026-02-27
 
 ### Phase 7: Resilience + Image Models

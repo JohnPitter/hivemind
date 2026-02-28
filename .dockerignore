@@ -1,0 +1,12 @@
+.git
+.github
+.claude
+*.md
+!README.md
+web/node_modules
+web/.vite
+deploy
+docs
+*.exe
+*.test
+coverage.out
