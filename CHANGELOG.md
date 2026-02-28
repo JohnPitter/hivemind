@@ -5,6 +5,17 @@ All notable changes to HiveMind will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-27
+
+### Phase 5: P2P + WireGuard Mesh
+
+#### Added
+- `internal/infra/wireguard.go` — WireGuard manager: Curve25519 keypair generation, mesh IP allocation, peer add/remove, config file generation
+- `internal/infra/signaling.go` — Signaling server: in-memory room registry, create/join/leave/peers/health HTTP endpoints, WG key exchange
+- `internal/infra/signaling_client.go` — Signaling client: HTTP client for room creation, joining, leaving, and peer discovery
+- `internal/infra/wireguard_test.go` — 5 tests: keypair generation, uniqueness, initialization, peer management, config writing
+- `internal/infra/signaling_test.go` — 3 tests: create/join request marshaling, join response structure
+
 ## [0.4.0] - 2026-02-27
 
 ### Phase 4: HTTP API + Single-Node Inference
