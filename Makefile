@@ -49,7 +49,7 @@ lint-python:
 
 # Proto
 proto:
-	protoc --go_out=. --go-grpc_out=. proto/worker.proto proto/peer.proto
+	protoc --proto_path=proto --go_out=gen --go_opt=module=github.com/joaopedro/hivemind/gen --go-grpc_out=gen --go-grpc_opt=module=github.com/joaopedro/hivemind/gen proto/worker.proto proto/peer.proto
 	cd worker && $(PYTHON) -m grpc_tools.protoc -I../proto --python_out=./worker/gen --grpc_python_out=./worker/gen ../proto/worker.proto ../proto/peer.proto
 
 # Clean

@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package hivemind.peer;
+
+option go_package = "github.com/joaopedro/hivemind/gen/peerpb";
+
+import "worker.proto";
+
+// PeerService defines the gRPC interface between peers in a room.
+// Peers communicate over the WireGuard mesh for handshakes, state sync,
+// health checks, and tensor forwarding during distributed inference.
+service PeerService {
+  // Peer lifecycle
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc SyncState(SyncRequest) returns (SyncResponse);
+  rpc HealthCheck(Ping) returns (Pong);
+
+  // Tensor forwarding for distributed inference
+  rpc ForwardTensor(hivemind.worker.ForwardRequest) returns (hivemind.worker.ForwardResponse);
+  rpc ForwardTensorStream(stream hivemind.worker.ForwardRequest) returns (stream hivemind.worker.ForwardResponse);
+}
+
+// --- Handshake ---
+
+message HandshakeRequest {
+  string peer_id = 1;
+  string room_token = 2;
+  hivemind.worker.ResourceUsage resources = 3;
+}
+
+message HandshakeResponse {
+  bool accepted = 1;
+  string error = 2;
+  RoomState room_state = 3;
+}
+
+// --- State Sync ---
+
+message RoomState {
+  string model_id = 1;
+  int32 total_layers = 2;
+  repeated PeerAssignment assignments = 3;
+}
+
+message PeerAssignment {
+  string peer_id = 1;
+  string peer_ip = 2;
+  repeated int32 layers = 3;
+  hivemind.worker.ResourceUsage resources = 4;
+}
+
+message SyncRequest {
+  string peer_id = 1;
+  uint64 state_version = 2;
+}
+
+message SyncResponse {
+  RoomState room_state = 1;
+  uint64 state_version = 2;
+}
+
+// --- Health Check ---
+
+message Ping {
+  int64 timestamp = 1;
+}
+
+message Pong {
+  int64 timestamp = 1;
+  float latency_ms = 2;
+}

@@ -47,8 +47,7 @@ Thumbs.db
 web/node_modules/
 web/dist/
 
-# Proto generated
-gen/
+# Proto generated (gen/ and worker/worker/gen/ are committed for reproducible builds)
 
 # Coverage
 coverage.out
