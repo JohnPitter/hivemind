@@ -26,6 +26,11 @@ type PeerNode struct {
 	Latency   float64 // measured latency in ms
 }
 
+// Client returns the gRPC client for this peer.
+func (p *PeerNode) Client() peerpb.PeerServiceClient {
+	return p.client
+}
+
 // PeerRegistry manages connected peers and their gRPC connections.
 type PeerRegistry struct {
 	mu          sync.RWMutex

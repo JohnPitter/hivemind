@@ -63,6 +63,7 @@ func (s *Server) setupRoutes() {
 	})
 
 	s.router.Get("/health", healthHandler.Health)
+	s.router.Get("/metrics", healthHandler.Metrics)
 
 	// Web dashboard (SPA) — must be last
 	if s.webFS != nil {

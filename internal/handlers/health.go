@@ -10,11 +10,20 @@ import (
 // HealthHandler handles system health check endpoints.
 type HealthHandler struct {
 	roomSvc services.RoomService
+	metrics *services.MetricsCollector
 }
 
 // NewHealthHandler creates a health handler.
 func NewHealthHandler(roomSvc services.RoomService) *HealthHandler {
-	return &HealthHandler{roomSvc: roomSvc}
+	return &HealthHandler{
+		roomSvc: roomSvc,
+		metrics: services.NewMetricsCollector(),
+	}
+}
+
+// SetMetrics injects an external metrics collector.
+func (h *HealthHandler) SetMetrics(m *services.MetricsCollector) {
+	h.metrics = m
 }
 
 // HealthResponse contains system health information.
@@ -42,4 +51,14 @@ func (h *HealthHandler) Health(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// Metrics handles GET /metrics returning observability data.
+func (h *HealthHandler) Metrics(w http.ResponseWriter, _ *http.Request) {
+	if h.metrics == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "no metrics available"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, h.metrics.Snapshot())
 }

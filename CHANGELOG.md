@@ -5,6 +5,28 @@ All notable changes to HiveMind will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-27
+
+### Phase 7: Resilience + Image Models
+
+#### Added
+- `internal/infra/circuit_breaker.go` — Per-peer circuit breaker: closed/open/half-open states, configurable max failures and reset timeout, state change callbacks
+- `internal/infra/circuit_breaker_test.go` — 7 tests: initial state, opens after max failures, success resets, half-open after timeout, half-open to closed, state change callback, manual reset
+- `internal/infra/health_monitor.go` — Peer health monitor: periodic gRPC health checks (5s interval), consecutive failure tracking, auto-mark dead after 3 fails, EMA latency calculation, peer recovery detection
+- `internal/services/resilience.go` — Resilience service: retry with exponential backoff (generic `WithRetry[T]`), adaptive timeout based on latency, slow peer detection, layer redistribution on peer death, peer recovery handling
+- `internal/services/resilience_test.go` — 6 tests: retry success first attempt, retry after failures, all retries fail, context canceled, adaptive timeout, slow peer detection, exponential backoff
+- `internal/services/leader_election.go` — Leader election: lowest-IP strategy, host death detection, election among alive peers, `onBecomeLeader` callback, IP comparison
+- `internal/services/leader_election_test.go` — 5 tests: lowest IP wins, local becomes leader with callback, not local leader, empty peers, single peer
+- `internal/services/diffusion_pipeline.go` — Diffusion pipeline parallelism: 3-stage pipeline (TextEncoder → UNet → VAE Decoder), VRAM-based stage assignment (UNet to strongest peer), distributed image generation
+- `internal/services/diffusion_pipeline_test.go` — 4 tests: single peer all stages, two peers UNet to strongest, three peers distributed, empty peers
+- `internal/services/metrics.go` — Metrics collector: atomic counters for inference/tensor/peer metrics, latency percentiles (P50/P95/P99), request duration histogram, point-in-time snapshots
+
+#### Changed
+- `internal/logger/logger.go` — Enhanced with context-aware logging (`WithContext`, `FromContext`, `CtxInfo`), JSON output mode (`InitJSON`), semantic loggers (`Room()`, `Peer()`, `Inference()`, `Mesh()`, `Worker()`)
+- `internal/handlers/health.go` — Added `GET /metrics` endpoint returning `MetricsSnapshot` with latency percentiles, transfer counts, error rates
+- `internal/api/server.go` — Added `/metrics` route
+- `internal/infra/peer_service.go` — Added `Client()` accessor method to `PeerNode`
+
 ## [0.6.0] - 2026-02-27
 
 ### Phase 6: Tensor Parallelism
