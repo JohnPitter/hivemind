@@ -3,8 +3,8 @@
 import grpc
 import warnings
 
-import peer_pb2 as peer__pb2
-import worker_pb2 as worker__pb2
+from . import peer_pb2 as peer__pb2
+from . import worker_pb2 as worker__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__

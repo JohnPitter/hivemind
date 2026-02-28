@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+print("[worker] Python process started", flush=True)
+
 import time
-import uuid
 from concurrent import futures
 
+print("[worker] importing grpc...", flush=True)
 import grpc
+print(f"[worker] grpc version: {grpc.__version__}", flush=True)
+
 import structlog
 
+print("[worker] importing generated protobuf...", flush=True)
 from worker.gen import worker_pb2, worker_pb2_grpc
+print("[worker] protobuf imported OK", flush=True)
+
+print("[worker] importing engines...", flush=True)
 from worker.inference.llm import LLMEngine
 from worker.inference.diffusion import DiffusionEngine
 from worker.resources.detector import detect, ResourceInfo
+print("[worker] all imports done", flush=True)
 
 logger = structlog.get_logger("worker.server")
 
@@ -266,8 +275,11 @@ class WorkerServicer(worker_pb2_grpc.WorkerServiceServicer):
 
 def serve(port: int = 50051) -> None:
     """Start the gRPC worker server."""
+    print(f"[worker] serve() called, port={port}", flush=True)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    print("[worker] creating WorkerServicer...", flush=True)
     servicer = WorkerServicer()
+    print("[worker] WorkerServicer created", flush=True)
     worker_pb2_grpc.add_WorkerServiceServicer_to_server(servicer, server)
 
     addr = f"[::]:{port}"

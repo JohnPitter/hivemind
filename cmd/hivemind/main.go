@@ -7,6 +7,7 @@ import (
 
 	"github.com/joaopedro/hivemind/internal/cli"
 	"github.com/joaopedro/hivemind/internal/config"
+	"github.com/joaopedro/hivemind/internal/infra"
 	"github.com/joaopedro/hivemind/internal/logger"
 	"github.com/joaopedro/hivemind/internal/services"
 	webpkg "github.com/joaopedro/hivemind/web"
@@ -20,9 +21,32 @@ var (
 )
 
 func main() {
-	// Initialize mock services (replaced by real services in Phase 4)
+	// Initialize services — real inference is the default, mock is opt-in
 	roomSvc := services.NewMockRoomService()
-	infSvc := services.NewMockInferenceService(roomSvc)
+
+	var infSvc services.InferenceService
+	if os.Getenv("HIVEMIND_MOCK") == "true" {
+		infSvc = services.NewMockInferenceService(roomSvc)
+		logger.Init(logger.LevelInfo)
+		logger.Info("using mock inference service", "reason", "HIVEMIND_MOCK=true")
+	} else {
+		pythonCmd := "python3"
+		workerDir := "/app/worker"
+		if dir := os.Getenv("HIVEMIND_WORKER_DIR"); dir != "" {
+			workerDir = dir
+		}
+		if cmd := os.Getenv("HIVEMIND_PYTHON_CMD"); cmd != "" {
+			pythonCmd = cmd
+		}
+
+		wm := infra.NewWorkerManager(infra.WorkerConfig{
+			Port:        50051,
+			PythonCmd:   pythonCmd,
+			WorkerDir:   workerDir,
+			MaxRestarts: 3,
+		})
+		infSvc = services.NewRealInferenceService(roomSvc, wm)
+	}
 
 	rootCmd := &cobra.Command{
 		Use:   "hivemind",

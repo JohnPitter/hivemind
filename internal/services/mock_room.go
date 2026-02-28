@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -80,16 +81,22 @@ func (s *MockRoomService) Join(_ context.Context, inviteCode string, resources m
 		return nil, models.ErrAlreadyInRoom
 	}
 
+	// Use model from env var if set (real inference mode), otherwise default
+	modelID := os.Getenv("HIVEMIND_MODEL_ID")
+	if modelID == "" {
+		modelID = "meta-llama/Llama-3-70B"
+	}
+
 	s.startAt = time.Now()
 	s.room = &models.Room{
 		ID:          generateID(8),
 		InviteCode:  inviteCode,
-		ModelID:     "meta-llama/Llama-3-70B",
+		ModelID:     modelID,
 		ModelType:   models.ModelTypeLLM,
 		State:       models.RoomStateActive,
 		HostID:      "host-abc",
 		MaxPeers:    5,
-		TotalLayers: 80,
+		TotalLayers: layersForModel(modelID),
 		CreatedAt:   time.Now().Add(-10 * time.Minute),
 		Peers: []models.Peer{
 			{
@@ -217,6 +224,8 @@ func layersForModel(modelID string) int {
 		return 32
 	case containsInsensitive(modelID, "3b"):
 		return 26
+	case containsInsensitive(modelID, "1.1b"), containsInsensitive(modelID, "tinyllama"):
+		return 22
 	default:
 		return 32
 	}

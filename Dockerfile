@@ -1,6 +1,9 @@
 # ============================================================================
-# HiveMind — Multi-stage production build
-# Output: ~25MB scratch image with single static binary
+# HiveMind — Production Build (Go + Python Worker + CUDA)
+# ============================================================================
+# Supports GPU (NVIDIA CUDA) and CPU-only modes.
+# CPU-only: set CUDA_VISIBLE_DEVICES="" in the container environment.
+# Mock mode: set HIVEMIND_MOCK=true to use mock inference (no Python worker).
 # ============================================================================
 
 # Stage 1: Build web dashboard
@@ -24,12 +27,39 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /hivemind \
     ./cmd/hivemind
 
-# Stage 3: Production image
-FROM scratch
-COPY --from=go-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=go-builder /usr/share/zoneinfo /usr/share/zoneinfo
+# Stage 3: Runtime with Python + torch + CUDA support
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3 /usr/bin/python
+
+# Copy Go binary and config
 COPY --from=go-builder /hivemind /hivemind
+COPY --from=go-builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY deploy/production/config.yaml /etc/hivemind/config.yaml
+
+# Copy Python worker
+COPY worker/ /app/worker/
+WORKDIR /app
+
+# Install Python dependencies (torch with CUDA support)
+RUN pip3 install --no-cache-dir \
+    grpcio>=1.60.0 \
+    grpcio-tools>=1.60.0 \
+    protobuf>=4.25.0 \
+    structlog>=24.1.0 \
+    torch>=2.1.0 \
+    transformers>=4.36.0 \
+    accelerate>=0.25.0 \
+    safetensors>=0.4.0 \
+    psutil>=5.9.0 \
+    sentencepiece
+
+ENV WORKER_PORT=50051
 
 EXPOSE 8080
 EXPOSE 50051

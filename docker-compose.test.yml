@@ -2,17 +2,21 @@
 # HiveMind E2E Integration Test Stack
 # ============================================================================
 # Usage:
-#   make test-e2e           — Run API tests (32 assertions)
-#   make test-e2e-scenario  — Run scenario test: full user flow (76 assertions)
+#   make test-e2e           — Run API tests (32 assertions) [mock mode]
+#   make test-e2e-scenario  — Run scenario test: full user flow (76 assertions) [mock mode]
+#   make test-e2e-2users    — Run two-user scenario (2 containers, 90+ assertions) [mock mode]
+#   make test-e2e-real      — Run real inference test: GPU + CPU pooling
 # ============================================================================
 
 services:
-  # ── HiveMind API Server ────────────────────────────────────────────────
+  # ── HiveMind API Server (mock mode for fast tests) ──────────────────────
   hivemind:
+    profiles: ["api", "scenario"]
     build:
       context: .
       dockerfile: Dockerfile
     environment:
+      - HIVEMIND_MOCK=true
       - HIVEMIND_API_HOST=0.0.0.0
       - HIVEMIND_API_PORT=8080
       - HIVEMIND_LOG_FORMAT=json
@@ -24,7 +28,7 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
-      start_period: 10s
+      start_period: 30s
 
   # ── E2E API Tests ─────────────────────────────────────────────────────
   e2e-tests:
@@ -51,3 +55,122 @@ services:
     entrypoint: ["sh", "/tests/scenario.sh"]
     environment:
       - API_URL=http://hivemind:8080
+
+  # ── Two-User Scenario (Alice + Bob) — mock mode ──────────────────────
+  alice:
+    profiles: ["two-users"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_MOCK=true
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_LOG_FORMAT=json
+      - HIVEMIND_LOG_LEVEL=debug
+    healthcheck:
+      test: ["CMD", "/hivemind", "health", "--quiet"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  bob:
+    profiles: ["two-users"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_MOCK=true
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_LOG_FORMAT=json
+      - HIVEMIND_LOG_LEVEL=debug
+    healthcheck:
+      test: ["CMD", "/hivemind", "health", "--quiet"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  two-user-tests:
+    profiles: ["two-users"]
+    image: curlimages/curl:8.12.1
+    depends_on:
+      alice:
+        condition: service_healthy
+      bob:
+        condition: service_healthy
+    volumes:
+      - ./tests/e2e:/tests:ro
+    entrypoint: ["sh", "/tests/two_users.sh"]
+    environment:
+      - ALICE_URL=http://alice:8080
+      - BOB_URL=http://bob:8080
+
+  # ── Real Inference: GPU + CPU Resource Pooling ───────────────────────
+  alice-real:
+    profiles: ["real"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_MODEL_ID=TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      - HIVEMIND_LOG_LEVEL=debug
+      - WORKER_PORT=50051
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "/hivemind", "health", "--quiet"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+
+  bob-real:
+    profiles: ["real"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_MODEL_ID=TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      - HIVEMIND_LOG_LEVEL=debug
+      - WORKER_PORT=50051
+      - CUDA_VISIBLE_DEVICES=
+    healthcheck:
+      test: ["CMD", "/hivemind", "health", "--quiet"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+
+  real-inference-tests:
+    profiles: ["real"]
+    image: curlimages/curl:8.12.1
+    depends_on:
+      alice-real:
+        condition: service_healthy
+      bob-real:
+        condition: service_healthy
+    volumes:
+      - ./tests/e2e:/tests:ro
+    entrypoint: ["sh", "/tests/real_inference.sh"]
+    environment:
+      - ALICE_URL=http://alice-real:8080
+      - BOB_URL=http://bob-real:8080
+
+volumes:
+  hf-cache:

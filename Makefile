@@ -1,4 +1,4 @@
-.PHONY: build test lint clean proto run help test-e2e test-e2e-scenario test-e2e-down
+.PHONY: build test lint clean proto run help test-e2e test-e2e-scenario test-e2e-2users test-e2e-real test-e2e-down
 
 # Variables
 BINARY_NAME=hivemind
@@ -56,8 +56,16 @@ test-e2e-scenario:
 	docker compose -f docker-compose.test.yml --profile scenario up --build --abort-on-container-exit --exit-code-from scenario-tests
 	docker compose -f docker-compose.test.yml --profile scenario down -v
 
+test-e2e-2users:
+	docker compose -f docker-compose.test.yml --profile two-users up --build --abort-on-container-exit --exit-code-from two-user-tests
+	docker compose -f docker-compose.test.yml --profile two-users down -v
+
+test-e2e-real:
+	docker compose -f docker-compose.test.yml --profile real up --build --abort-on-container-exit --exit-code-from real-inference-tests
+	docker compose -f docker-compose.test.yml --profile real down -v
+
 test-e2e-down:
-	docker compose -f docker-compose.test.yml --profile api --profile scenario down -v --remove-orphans
+	docker compose -f docker-compose.test.yml --profile api --profile scenario --profile two-users --profile real down -v --remove-orphans
 
 # Proto
 proto:
@@ -90,5 +98,7 @@ help:
 	@echo "  make proto          Generate protobuf code"
 	@echo "  make test-e2e           Run E2E API tests (Docker)"
 	@echo "  make test-e2e-scenario  Run E2E scenario test — real user flow (Docker)"
+	@echo "  make test-e2e-2users    Run two-user scenario — 2 containers (Docker)"
+	@echo "  make test-e2e-real      Run real inference test — GPU + CPU pooling (Docker)"
 	@echo "  make test-e2e-down      Tear down E2E test stack"
 	@echo "  make clean          Clean build artifacts"

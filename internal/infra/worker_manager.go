@@ -137,9 +137,12 @@ func (wm *WorkerManager) Client() workerpb.WorkerServiceClient {
 }
 
 func (wm *WorkerManager) spawnProcess(ctx context.Context) error {
-	wm.cmd = exec.CommandContext(ctx, wm.pythonCmd, "-m", "worker.server")
+	wm.cmd = exec.CommandContext(ctx, wm.pythonCmd, "-m", "worker")
 	wm.cmd.Dir = wm.workerDir
-	wm.cmd.Env = append(os.Environ(), fmt.Sprintf("WORKER_PORT=%d", wm.port))
+	wm.cmd.Env = append(os.Environ(),
+		fmt.Sprintf("WORKER_PORT=%d", wm.port),
+		"PYTHONUNBUFFERED=1",
+	)
 	wm.cmd.Stdout = os.Stdout
 	wm.cmd.Stderr = os.Stderr
 
@@ -154,8 +157,8 @@ func (wm *WorkerManager) spawnProcess(ctx context.Context) error {
 func (wm *WorkerManager) waitForReady(ctx context.Context) error {
 	addr := fmt.Sprintf("localhost:%d", wm.port)
 
-	// Retry connection for up to 30 seconds
-	deadline := time.Now().Add(30 * time.Second)
+	// Retry connection for up to 120 seconds (torch/transformers import can be slow)
+	deadline := time.Now().Add(120 * time.Second)
 	backoff := 500 * time.Millisecond
 
 	for time.Now().Before(deadline) {
