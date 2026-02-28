@@ -1,4 +1,4 @@
-.PHONY: build test lint clean proto run help
+.PHONY: build test lint clean proto run help test-e2e test-e2e-down
 
 # Variables
 BINARY_NAME=hivemind
@@ -47,6 +47,14 @@ lint-go:
 lint-python:
 	cd worker && $(PYTHON) -m ruff check .
 
+# E2E integration tests (Docker)
+test-e2e:
+	docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from e2e-tests
+	docker compose -f docker-compose.test.yml down -v
+
+test-e2e-down:
+	docker compose -f docker-compose.test.yml down -v --remove-orphans
+
 # Proto
 proto:
 	protoc --proto_path=proto --go_out=gen --go_opt=module=github.com/joaopedro/hivemind/gen --go-grpc_out=gen --go-grpc_opt=module=github.com/joaopedro/hivemind/gen proto/worker.proto proto/peer.proto
@@ -76,4 +84,6 @@ help:
 	@echo "  make coverage       Generate Go coverage report"
 	@echo "  make lint           Run all linters"
 	@echo "  make proto          Generate protobuf code"
+	@echo "  make test-e2e       Run E2E integration tests (Docker)"
+	@echo "  make test-e2e-down  Tear down E2E test stack"
 	@echo "  make clean          Clean build artifacts"

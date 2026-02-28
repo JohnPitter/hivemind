@@ -56,7 +56,9 @@ func main() {
 	webFS, _ := fs.Sub(webpkg.Dist, "dist")
 
 	rootCmd.AddCommand(versionCmd())
+	rootCmd.AddCommand(cli.ServeCmd(webFS, roomSvc, infSvc))
 	rootCmd.AddCommand(cli.WebCmd(webFS, roomSvc, infSvc))
+	rootCmd.AddCommand(cli.HealthCheckCmd())
 	cli.RegisterCommands(rootCmd, roomSvc, infSvc)
 
 	if err := rootCmd.Execute(); err != nil {

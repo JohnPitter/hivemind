@@ -1,0 +1,37 @@
+# ============================================================================
+# HiveMind E2E Integration Test Stack
+# ============================================================================
+# Usage: docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+# ============================================================================
+
+services:
+  # ── HiveMind API Server ────────────────────────────────────────────────
+  hivemind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_LOG_FORMAT=json
+      - HIVEMIND_LOG_LEVEL=debug
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "/hivemind", "health", "--quiet"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # ── E2E Test Runner ────────────────────────────────────────────────────
+  e2e-tests:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      hivemind:
+        condition: service_healthy
+    volumes:
+      - ./tests/e2e:/tests:ro
+    entrypoint: ["sh", "/tests/run.sh"]
+    environment:
+      - API_URL=http://hivemind:8080
