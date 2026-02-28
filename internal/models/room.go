@@ -67,9 +67,22 @@ type RoomConfig struct {
 
 // RoomStatus holds real-time room status for API/CLI display.
 type RoomStatus struct {
-	Room         Room    `json:"room"`
-	TotalVRAM    int64   `json:"total_vram_mb"`
-	UsedVRAM     int64   `json:"used_vram_mb"`
-	TokensPerSec float64 `json:"tokens_per_sec"`
-	Uptime       string  `json:"uptime"`
+	Room         Room              `json:"room"`
+	TotalVRAM    int64             `json:"total_vram_mb"`
+	UsedVRAM     int64             `json:"used_vram_mb"`
+	TokensPerSec float64           `json:"tokens_per_sec"`
+	Uptime       string            `json:"uptime"`
+	Distributed  *DistributedStats `json:"distributed,omitempty"`
+}
+
+// DistributedStats holds metrics for distributed tensor inference.
+type DistributedStats struct {
+	PeerCount        int     `json:"peer_count"`
+	TotalLayers      int     `json:"total_layers"`
+	AvgLatencyMs     float64 `json:"avg_latency_ms"`
+	TensorTransfers  int64   `json:"tensor_transfers"`
+	BytesTransferred int64   `json:"bytes_transferred"`
+	CompressionRatio float64 `json:"compression_ratio"`
+	ForwardPassAvgMs float64 `json:"forward_pass_avg_ms"`
+	IsDistributed    bool    `json:"is_distributed"`
 }

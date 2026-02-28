@@ -37,12 +37,24 @@ export interface Room {
   peers: Peer[];
 }
 
+export interface DistributedStats {
+  peer_count: number;
+  total_layers: number;
+  avg_latency_ms: number;
+  tensor_transfers: number;
+  bytes_transferred: number;
+  compression_ratio: number;
+  forward_pass_avg_ms: number;
+  is_distributed: boolean;
+}
+
 export interface RoomStatus {
   room: Room;
   total_vram_mb: number;
   used_vram_mb: number;
   tokens_per_sec: number;
   uptime: string;
+  distributed?: DistributedStats;
 }
 
 export interface ChatMessage {

@@ -5,6 +5,27 @@ All notable changes to HiveMind will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-02-27
+
+### Phase 6: Tensor Parallelism
+
+#### Added
+- `internal/infra/peer_service.go` — PeerRegistry: gRPC connection management per peer, handshake, latency measurement, forward tensor routing
+- `internal/infra/peer_grpc_server.go` — Peer gRPC server: implements PeerService (Handshake, SyncState, HealthCheck, ForwardTensor, ForwardTensorStream) with tensor compression
+- `internal/infra/tensor_compress.go` — TensorCompressor: zstd compression/decompression for tensor transfers (~40% size reduction), stream support, automatic beneficial compression detection
+- `internal/infra/tensor_compress_test.go` — 6 tests: round-trip, empty data, random data, compress-if-beneficial, should-compress threshold, stream compression
+- `internal/services/distributed_inference.go` — Distributed inference coordinator: VRAM-proportional layer assignment, forward pass chaining across peers, SHA-256 checksums, zstd compression, transfer metrics tracking
+- `internal/services/distributed_inference_test.go` — 4 tests: VRAM-proportional assignment, equal fallback (zero VRAM), single peer, empty inputs
+- `web/src/components/DistributedPanel.tsx` — Web dashboard panel: tensor transfer count, compression ratio, forward pass latency, pipeline visualization with animated progress bars
+
+#### Changed
+- `internal/models/room.go` — Added `DistributedStats` type and optional `Distributed` field to `RoomStatus` for distributed inference metrics
+- `internal/cli/status.go` — Added distributed inference stats section: transfer count, bytes transferred, compression ratio, forward pass avg, latency, mode indicator
+- `web/src/types/index.ts` — Added `DistributedStats` interface to TypeScript types
+- `web/src/lib/mock-data.ts` — Added distributed stats mock data
+- `web/src/App.tsx` — Integrated DistributedPanel into dashboard view
+- `go.mod` — Added `github.com/klauspost/compress` for zstd tensor compression
+
 ## [0.5.0] - 2026-02-27
 
 ### Phase 5: P2P + WireGuard Mesh

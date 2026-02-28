@@ -71,6 +71,12 @@ func renderStatus(status *models.RoomStatus) {
 	// Layer map
 	renderLayerMap(room.Peers, room.TotalLayers)
 	fmt.Println()
+
+	// Distributed inference stats
+	if status.Distributed != nil && status.Distributed.IsDistributed {
+		renderDistributedStats(status.Distributed)
+		fmt.Println()
+	}
 }
 
 func renderVRAMBar(used, total int64) {
@@ -194,6 +200,49 @@ func renderLayerMap(peers []models.Peer, totalLayers int) {
 	// Scale
 	fmt.Printf("  %-12s [%-*s]\n", "", mapWidth,
 		DimStyle.Render(fmt.Sprintf("0%s%d", strings.Repeat(" ", mapWidth-4), totalLayers)))
+}
+
+func renderDistributedStats(stats *models.DistributedStats) {
+	fmt.Println(BoldStyle.Render("  Distributed Inference"))
+	fmt.Println()
+
+	// Transfer metrics
+	bytesStr := formatBytes(stats.BytesTransferred)
+	ratioStr := fmt.Sprintf("%.1f%%", stats.CompressionRatio*100)
+	if stats.CompressionRatio < 1.0 {
+		ratioStr = fmt.Sprintf("%.0f%% saved", (1-stats.CompressionRatio)*100)
+	}
+
+	fmt.Printf("  %s %-8s  %s %-10s  %s %-8s  %s %-10s\n",
+		LabelStyle.Render("Transfers:"),
+		ValueStyle.Render(fmt.Sprintf("%d", stats.TensorTransfers)),
+		LabelStyle.Render("Data:"),
+		ValueStyle.Render(bytesStr),
+		LabelStyle.Render("Compress:"),
+		ValueStyle.Render(ratioStr),
+		LabelStyle.Render("Avg Pass:"),
+		ValueStyle.Render(fmt.Sprintf("%.0fms", stats.ForwardPassAvgMs)),
+	)
+
+	fmt.Printf("  %s %-8s  %s %-10s\n",
+		LabelStyle.Render("Avg Latency:"),
+		ValueStyle.Render(fmt.Sprintf("%.0fms", stats.AvgLatencyMs)),
+		LabelStyle.Render("Mode:"),
+		ValueStyle.Render(fmt.Sprintf("tensor-parallel (%d peers)", stats.PeerCount)),
+	)
+}
+
+func formatBytes(bytes int64) string {
+	switch {
+	case bytes >= 1024*1024*1024:
+		return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
+	case bytes >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	case bytes >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }
 
 func truncate(s string, maxLen int) string {

@@ -5,6 +5,7 @@ import { PeersPanel } from './components/PeersPanel';
 import { ResourceMonitor } from './components/ResourceMonitor';
 import { ChatPlayground } from './components/ChatPlayground';
 import { LayerMap } from './components/LayerMap';
+import { DistributedPanel } from './components/DistributedPanel';
 import { mockRoomStatus } from './lib/mock-data';
 
 type Tab = 'dashboard' | 'chat' | 'room';
@@ -28,6 +29,9 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <div className="space-y-6 max-w-7xl">
               <ResourceMonitor status={status} />
+              {status.distributed?.is_distributed && (
+                <DistributedPanel stats={status.distributed} />
+              )}
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <PeersPanel peers={status.room.peers} />
                 <LayerMap

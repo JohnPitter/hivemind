@@ -75,6 +75,16 @@ export const mockRoomStatus: RoomStatus = {
   used_vram_mb: 41984,
   tokens_per_sec: 14.7,
   uptime: '45m12s',
+  distributed: {
+    peer_count: 3,
+    total_layers: 80,
+    avg_latency_ms: 59.0,
+    tensor_transfers: 1247,
+    bytes_transferred: 8_432_910_336,
+    compression_ratio: 0.62,
+    forward_pass_avg_ms: 142.5,
+    is_distributed: true,
+  },
 };
 
 export const mockHealth: HealthStatus = {
