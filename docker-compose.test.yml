@@ -1,7 +1,9 @@
 # ============================================================================
 # HiveMind E2E Integration Test Stack
 # ============================================================================
-# Usage: docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+# Usage:
+#   make test-e2e           — Run API tests (32 assertions)
+#   make test-e2e-scenario  — Run scenario test: full user flow (76 assertions)
 # ============================================================================
 
 services:
@@ -24,8 +26,9 @@ services:
       retries: 15
       start_period: 10s
 
-  # ── E2E Test Runner ────────────────────────────────────────────────────
+  # ── E2E API Tests ─────────────────────────────────────────────────────
   e2e-tests:
+    profiles: ["api"]
     image: curlimages/curl:8.12.1
     depends_on:
       hivemind:
@@ -33,5 +36,18 @@ services:
     volumes:
       - ./tests/e2e:/tests:ro
     entrypoint: ["sh", "/tests/run.sh"]
+    environment:
+      - API_URL=http://hivemind:8080
+
+  # ── E2E Scenario Tests (Real User Flow) ─────────────────────────────
+  scenario-tests:
+    profiles: ["scenario"]
+    image: curlimages/curl:8.12.1
+    depends_on:
+      hivemind:
+        condition: service_healthy
+    volumes:
+      - ./tests/e2e:/tests:ro
+    entrypoint: ["sh", "/tests/scenario.sh"]
     environment:
       - API_URL=http://hivemind:8080

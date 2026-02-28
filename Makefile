@@ -1,4 +1,4 @@
-.PHONY: build test lint clean proto run help test-e2e test-e2e-down
+.PHONY: build test lint clean proto run help test-e2e test-e2e-scenario test-e2e-down
 
 # Variables
 BINARY_NAME=hivemind
@@ -49,11 +49,15 @@ lint-python:
 
 # E2E integration tests (Docker)
 test-e2e:
-	docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from e2e-tests
-	docker compose -f docker-compose.test.yml down -v
+	docker compose -f docker-compose.test.yml --profile api up --build --abort-on-container-exit --exit-code-from e2e-tests
+	docker compose -f docker-compose.test.yml --profile api down -v
+
+test-e2e-scenario:
+	docker compose -f docker-compose.test.yml --profile scenario up --build --abort-on-container-exit --exit-code-from scenario-tests
+	docker compose -f docker-compose.test.yml --profile scenario down -v
 
 test-e2e-down:
-	docker compose -f docker-compose.test.yml down -v --remove-orphans
+	docker compose -f docker-compose.test.yml --profile api --profile scenario down -v --remove-orphans
 
 # Proto
 proto:
@@ -84,6 +88,7 @@ help:
 	@echo "  make coverage       Generate Go coverage report"
 	@echo "  make lint           Run all linters"
 	@echo "  make proto          Generate protobuf code"
-	@echo "  make test-e2e       Run E2E integration tests (Docker)"
-	@echo "  make test-e2e-down  Tear down E2E test stack"
+	@echo "  make test-e2e           Run E2E API tests (Docker)"
+	@echo "  make test-e2e-scenario  Run E2E scenario test — real user flow (Docker)"
+	@echo "  make test-e2e-down      Tear down E2E test stack"
 	@echo "  make clean          Clean build artifacts"
