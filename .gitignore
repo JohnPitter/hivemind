@@ -1,0 +1,57 @@
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# HiveMind
+.hivemind/
+*.key
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node (web dashboard)
+web/node_modules/
+web/dist/
+
+# Proto generated
+gen/
+
+# Coverage
+coverage.out
+coverage.html
+htmlcov/
+.coverage

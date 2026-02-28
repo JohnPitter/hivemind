@@ -1,0 +1,45 @@
+[project]
+name = "hivemind-worker"
+version = "0.1.0"
+description = "HiveMind inference worker — Petals-based LLM + custom diffusion pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "grpcio>=1.60.0",
+    "grpcio-tools>=1.60.0",
+    "protobuf>=4.25.0",
+    "torch>=2.1.0",
+    "safetensors>=0.4.0",
+    "structlog>=24.1.0",
+]
+
+[project.optional-dependencies]
+llm = [
+    "petals>=2.3.0",
+    "transformers>=4.36.0",
+    "accelerate>=0.25.0",
+]
+diffusion = [
+    "diffusers>=0.25.0",
+    "transformers>=4.36.0",
+    "accelerate>=0.25.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
