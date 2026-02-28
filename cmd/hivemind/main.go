@@ -2,17 +2,19 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/joaopedro/hivemind/internal/cli"
 	"github.com/joaopedro/hivemind/internal/config"
 	"github.com/joaopedro/hivemind/internal/logger"
 	"github.com/joaopedro/hivemind/internal/services"
+	webpkg "github.com/joaopedro/hivemind/web"
 	"github.com/spf13/cobra"
 )
 
 var (
-	Version = "0.1.0"
+	Version = "0.2.0"
 	cfgFile string
 	verbose bool
 )
@@ -51,7 +53,10 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.hivemind/config.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable debug logging")
 
+	webFS, _ := fs.Sub(webpkg.Dist, "dist")
+
 	rootCmd.AddCommand(versionCmd())
+	rootCmd.AddCommand(cli.WebCmd(webFS, roomSvc, infSvc))
 	cli.RegisterCommands(rootCmd, roomSvc, infSvc)
 
 	if err := rootCmd.Execute(); err != nil {

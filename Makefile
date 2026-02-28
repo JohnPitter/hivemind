@@ -10,8 +10,11 @@ PYTHON=python
 PIP=pip
 
 # Build
-build:
+build: build-web
 	$(GO_BUILD) -o bin/$(BINARY_NAME) ./cmd/hivemind/
+
+build-web:
+	cd web && npm install && npm run build
 
 build-worker:
 	cd worker && $(PIP) install -e .
@@ -52,6 +55,8 @@ proto:
 # Clean
 clean:
 	rm -rf bin/
+	rm -rf web/dist/
+	rm -rf web/node_modules/
 	rm -f coverage.out coverage.html
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
@@ -61,7 +66,8 @@ help:
 	@echo "HiveMind — Distributed P2P AI Inference"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make build          Build Go binary"
+	@echo "  make build          Build frontend + Go binary"
+	@echo "  make build-web      Build React dashboard"
 	@echo "  make build-worker   Install Python worker"
 	@echo "  make run            Build and run"
 	@echo "  make test           Run all tests (Go + Python)"
