@@ -734,69 +734,103 @@ Error format: `{"error": {"message": "...", "code": "..."}}`
 
 ## 10. Implementation Roadmap
 
-### Phase 1: Foundation (2 nodes on LAN)
+> **Priority: CLI & Web first.** Build the user-facing interfaces early with mocks/stubs,
+> then wire up real backend services behind them incrementally.
 
-**Goal:** Two machines on the same LAN running distributed inference of a small LLM.
+### Phase 1: Scaffolding + Core Types
 
-| SubPhase | Description | Verification |
-|----------|-------------|--------------|
-| **1A** | Project scaffolding: Go mod, Python pyproject, folder structure, Makefile, CI | `go build ./...` passes, `pytest` passes |
-| **1B** | Protobuf + gRPC setup: worker.proto, peer.proto, codegen Go + Python | Generated types compile in both languages |
-| **1C** | Python worker — local model: gRPC server, LoadModel, ChatCompletion, GetStatus | Worker runs, responds to gRPC, generates text |
-| **1D** | Go orchestrator — single node: process manager, gRPC client, HTTP server, middleware | `curl /v1/chat/completions` returns text |
-| **1E** | Peer-to-peer — LAN direct: PeerService gRPC, handshake, resource registry, layer assignment | 2 nodes discover each other and exchange state |
-| **1F** | Tensor parallelism — LAN: subset layer loading, ForwardPass, tensor serialization, checksum | 7B model split across 2 machines, inference works e2e |
-
-### Phase 2: Real Network (internet via WireGuard)
-
-**Goal:** Peers behind NAT connect via WireGuard mesh and run inference.
+**Goal:** Project structure, build pipeline, and shared types ready.
 
 | SubPhase | Description | Verification |
 |----------|-------------|--------------|
-| **2A** | WireGuard integration: keypair gen, wg0.conf gen, interface up/down | 2 nodes connected via WireGuard tunnel |
-| **2B** | Signaling server: Go HTTP + WebSocket, room create/join, WG pubkey exchange, Dockerfile | 2 nodes discover via signaling, connect WG automatically |
-| **2C** | Room lifecycle: create, join, leave, close, room token auth | Full room lifecycle works |
-| **2D** | Inference via internet: tensor over mesh, zstd compression, adaptive timeout, SSE streaming | 70B model split across 2+ machines via internet |
+| **1A** | Project scaffolding: Go mod, Python pyproject, folder structure, Makefile, CI (.golangci.yml, GitHub Actions) | `go build ./...` passes, `pytest` passes |
+| **1B** | Core domain types: `internal/models/` (Room, Peer, ResourceSpec, InferenceRequest), config with Viper, structured logger with slog | Types compile, config loads from YAML + env |
+| **1C** | Mock services: `internal/services/` with interfaces + in-memory mock implementations (MockRoomService, MockInferenceService, MockWorkerService) | Mock services return realistic fake data |
 
-### Phase 3: Resilience (production-ready)
+### Phase 2: CLI Interativa ★
 
-**Goal:** System survives failures without killing the room.
-
-| SubPhase | Description | Verification |
-|----------|-------------|--------------|
-| **3A** | Fault tolerance: peer offline detection, layer redistribution, hot-join, worker restart | Kill peer mid-inference, room recovers |
-| **3B** | Leader election: host detection, election by lowest IP, state replication | Kill host, new leader takes over |
-| **3C** | Observability: structured logging, context tags, request logging, metrics, GET /room/status | Logs traceable e2e, metrics visible on /room/status |
-
-### Phase 4: Image Models (diffusion pipeline)
-
-**Goal:** Support Stable Diffusion and similar via pipeline parallelism.
+**Goal:** Full interactive CLI that works end-to-end with mock data. User can experience the complete workflow.
 
 | SubPhase | Description | Verification |
 |----------|-------------|--------------|
-| **4A** | Diffusion pipeline worker: TextEncoder -> UNet -> VAE stages, stage assignment | SDXL split across 2 nodes, generates image |
-| **4B** | Image API: POST /v1/images/generations, params, progress callback | API compatible with OpenAI image endpoint |
-| **4C** | Multi-model rooms: LLM + Diffusion simultaneous, dynamic allocation, hot-swap | Room running llama-70b + SDXL at the same time |
+| **2A** | CLI framework: cobra commands structure, lipgloss theme (colors, borders, formatting), global flags (`--config`, `--verbose`) | `hivemind --help` shows all commands with styled output |
+| **2B** | `hivemind create`: interactive room creation wizard — select model (list from HuggingFace-like menu), set max peers, define resource contribution. Shows room summary + invite code with lipgloss box. Uses MockRoomService | `hivemind create` walks through wizard, shows invite code |
+| **2C** | `hivemind join <code>`: join room flow — validates code, shows room info (model, peers, resources), confirms join, shows resource contribution form. Progress bar for "connecting" (mock) | `hivemind join abc123` shows room info and joins |
+| **2D** | `hivemind status`: real-time room dashboard in terminal — peers table (name, IP, layers, VRAM, latency), model info, room health, auto-refresh every 2s with lipgloss table | `hivemind status` shows live-updating styled table |
+| **2E** | `hivemind chat`: interactive chat in terminal — streaming token output, conversation history, `/quit` to exit. Like a mini ChatGPT in the terminal. Uses MockInferenceService | `hivemind chat` starts interactive session with streaming responses |
+| **2F** | `hivemind leave` + `hivemind stop`: leave room gracefully, stop hosting. Confirmation prompts, cleanup feedback | Both commands work with confirmation |
 
-### Phase 5: UX & Polish
+### Phase 3: Web Dashboard ★
+
+**Goal:** React SPA embedded in Go binary with real-time room monitoring and chat playground.
 
 | SubPhase | Description | Verification |
 |----------|-------------|--------------|
-| **5A** | Interactive CLI: create, join, status, leave, progress bars, lipgloss formatting | Full CLI workflow works |
-| **5B** | Web dashboard: React SPA embedded in Go binary, real-time status, latency graphs, chat playground | Dashboard shows room status in real-time |
-| **5C** | Installer: single binary, GPU auto-detection, setup wizard | One-click setup on fresh machine |
+| **3A** | Web project setup: Vite + React + TypeScript + Tailwind inside `web/`. Go embed for serving static files. HTTP API endpoints (`/api/room/status`, `/api/health`) returning mock JSON | `hivemind web` opens browser, dashboard loads |
+| **3B** | Dashboard layout: dark theme sidebar (room info, peers list) + main content area. Header with room name, model, uptime. Responsive with Tailwind. Lucide React icons | Layout renders with mock data, responsive |
+| **3C** | Peers panel: real-time peers table with status indicators (online/offline/syncing), VRAM usage bars, layer assignments, latency badges. Auto-refresh via polling or WebSocket | Peers panel shows all connected peers with live stats |
+| **3D** | Resource monitor: VRAM/RAM usage charts (recharts), network throughput graph, tokens/s counter, inference queue depth. Cards with sparklines | Charts render with mock time-series data |
+| **3E** | Chat playground: OpenAI-style chat interface — message input, streaming response display, model selector, temperature/max_tokens sliders, conversation history | Chat works with mock streaming responses |
+| **3F** | Room management UI: create room form, join room form, QR code for invite code (qrcode.react), leave/stop buttons with confirmation dialogs | Full room lifecycle manageable from web UI |
+
+### Phase 4: HTTP API + Single-Node Inference
+
+**Goal:** Real HTTP API server and single-machine inference working. CLI and Web now use real data.
+
+| SubPhase | Description | Verification |
+|----------|-------------|--------------|
+| **4A** | HTTP API server: chi router, middleware pipeline (logger, rateLimit, auth), handlers for all endpoints, OpenAI-compatible response format | `curl /v1/chat/completions` returns properly formatted response |
+| **4B** | Protobuf + gRPC setup: worker.proto, peer.proto, codegen for Go + Python | Generated types compile in both languages |
+| **4C** | Python worker — local model: gRPC server, LoadModel, ChatCompletion, GetStatus, resource detection | Worker loads small model, generates text via gRPC |
+| **4D** | Go process manager: spawn/kill Python worker, health checks, auto-restart with backoff | Go spawns worker, monitors health, restarts on crash |
+| **4E** | Wire CLI + Web to real services: replace mock services with real implementations, SSE streaming for chat | CLI and Web use real inference, streaming works e2e |
+
+### Phase 5: P2P + WireGuard Mesh
+
+**Goal:** Peers behind NAT connect via WireGuard mesh.
+
+| SubPhase | Description | Verification |
+|----------|-------------|--------------|
+| **5A** | WireGuard integration: keypair gen, wg0.conf gen, interface up/down programmatically | 2 nodes connected via WireGuard tunnel |
+| **5B** | Signaling server: Go HTTP + WebSocket, room create/join, WG pubkey exchange, Dockerfile | 2 nodes discover via signaling, connect WG automatically |
+| **5C** | Room lifecycle: create/join/leave/close with real WireGuard mesh, room token auth | Full room lifecycle works over internet |
+
+### Phase 6: Tensor Parallelism
+
+**Goal:** Models split across multiple machines, inference works distributed.
+
+| SubPhase | Description | Verification |
+|----------|-------------|--------------|
+| **6A** | PeerService gRPC: handshake, resource registry, layer assignment algorithm | 2 nodes exchange state, layers assigned by VRAM |
+| **6B** | Tensor transfer: ForwardPass, safetensors serialization, zstd compression, SHA-256 checksum | Tensors transfer between nodes correctly |
+| **6C** | Distributed inference: full pipeline — tokenize → split forward pass → collect → decode. SSE streaming | 70B model split across 2+ machines, generates text |
+| **6D** | CLI + Web updates: status shows real peer layers, latency, tensor transfer metrics | Dashboard shows live distributed inference stats |
+
+### Phase 7: Resilience + Image Models
+
+**Goal:** Production-ready system with fault tolerance and image model support.
+
+| SubPhase | Description | Verification |
+|----------|-------------|--------------|
+| **7A** | Fault tolerance: peer disconnect detection, layer redistribution, hot-join, worker restart | Kill peer mid-inference, room recovers |
+| **7B** | Leader election: host detection, election by lowest IP, state replication every 30s | Kill host, new leader takes over seamlessly |
+| **7C** | Diffusion pipeline: TextEncoder → UNet → VAE stages, stage assignment, POST /v1/images/generations | SDXL split across 2 nodes, generates image |
+| **7D** | Observability: structured logging, context tags, metrics endpoint, GET /room/status with full stats | Logs traceable e2e, metrics visible on dashboard |
 
 ### Estimated Effort
 
 | Phase | SubPhases | Estimated Effort |
 |-------|-----------|-----------------|
-| **1: Foundation** | 6 (1A-1F) | 3-4 weeks |
-| **2: Real Network** | 4 (2A-2D) | 2-3 weeks |
-| **3: Resilience** | 3 (3A-3C) | 2 weeks |
-| **4: Image Models** | 3 (4A-4C) | 2 weeks |
-| **5: UX** | 3 (5A-5C) | 2-3 weeks |
+| **1: Scaffolding** | 3 (1A-1C) | 1 week |
+| **2: CLI** ★ | 6 (2A-2F) | 2 weeks |
+| **3: Web Dashboard** ★ | 6 (3A-3F) | 2-3 weeks |
+| **4: API + Inference** | 5 (4A-4E) | 2-3 weeks |
+| **5: P2P + WireGuard** | 3 (5A-5C) | 2 weeks |
+| **6: Tensor Parallelism** | 4 (6A-6D) | 2-3 weeks |
+| **7: Resilience + Images** | 4 (7A-7D) | 2 weeks |
 
-**Functional MVP (Phase 1+2): ~5-7 weeks** — 2+ machines via internet running LLM with tensor parallelism.
+**Interactive MVP (Phase 1+2+3): ~5-6 weeks** — Full CLI + Web Dashboard with mock inference.
+**Functional MVP (Phase 1-5): ~9-11 weeks** — Real distributed inference over internet with UI.
 
 ---
 
