@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/joaopedro/hivemind/internal/cli"
 	"github.com/joaopedro/hivemind/internal/config"
 	"github.com/joaopedro/hivemind/internal/logger"
+	"github.com/joaopedro/hivemind/internal/services"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +18,10 @@ var (
 )
 
 func main() {
+	// Initialize mock services (replaced by real services in Phase 4)
+	roomSvc := services.NewMockRoomService()
+	infSvc := services.NewMockInferenceService(roomSvc)
+
 	rootCmd := &cobra.Command{
 		Use:   "hivemind",
 		Short: "Distributed P2P AI inference",
@@ -36,6 +42,8 @@ func main() {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println(cli.Logo())
+			fmt.Println()
 			return cmd.Help()
 		},
 	}
@@ -44,6 +52,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable debug logging")
 
 	rootCmd.AddCommand(versionCmd())
+	cli.RegisterCommands(rootCmd, roomSvc, infSvc)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
