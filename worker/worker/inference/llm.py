@@ -231,12 +231,9 @@ class LLMEngine:
         meta: object,
         compressed: bool,
     ) -> bytes:
-        """Execute a forward pass through locally-loaded layers.
+        """Execute a forward pass through locally-loaded layers."""
+        from worker.tensor.transfer import serialize_tensor, deserialize_tensor
 
-        This is the core of tensor parallelism — receives an intermediate
-        tensor from the previous node, processes it through local layers,
-        and returns the result for the next node.
-        """
         logger.info(
             "forward pass",
             data_size=len(tensor_data),
@@ -244,9 +241,43 @@ class LLMEngine:
             layers=self.loaded_layers,
         )
 
-        # TODO: Phase 6B — implement real forward pass
-        # For now, pass through (identity function)
-        return tensor_data
+        if self._model is None:
+            return tensor_data  # identity fallback (mock mode)
+
+        try:
+            import torch
+            hidden = deserialize_tensor(tensor_data)
+            layers = self._get_transformer_layers()
+
+            from_layer = getattr(meta, "from_layer", 0)
+            to_layer = getattr(meta, "to_layer", len(layers) - 1)
+
+            with torch.no_grad():
+                for i in range(from_layer, min(to_layer + 1, len(layers))):
+                    hidden = layers[i](hidden)[0]
+
+            return serialize_tensor(hidden)
+        except Exception as e:
+            logger.error("forward pass failed, returning identity", error=str(e))
+            return tensor_data
+
+    def _get_transformer_layers(self):
+        """Detect and return the model's transformer layers."""
+        if self._model is None:
+            return []
+
+        # Llama / Mistral
+        if hasattr(self._model, "model") and hasattr(self._model.model, "layers"):
+            return list(self._model.model.layers)
+        # GPT-NeoX
+        if hasattr(self._model, "gpt_neox") and hasattr(self._model.gpt_neox, "layers"):
+            return list(self._model.gpt_neox.layers)
+        # GPT-2 / GPT-J
+        if hasattr(self._model, "transformer") and hasattr(self._model.transformer, "h"):
+            return list(self._model.transformer.h)
+
+        logger.warn("unknown model architecture, cannot extract layers")
+        return []
 
     def _format_prompt(self, messages: list[tuple[str, str]]) -> str:
         """Format messages into a prompt string for the model."""

@@ -21,6 +21,18 @@ type Config struct {
 	// Worker settings
 	Worker WorkerConfig `mapstructure:"worker"`
 
+	// Signaling server
+	Signaling SignalingConfig `mapstructure:"signaling"`
+
+	// Mesh networking
+	Mesh MeshConfig `mapstructure:"mesh"`
+
+	// Local peer identity
+	Peer PeerConfig `mapstructure:"peer"`
+
+	// Resilience settings
+	Resilience ResilienceConfig `mapstructure:"resilience"`
+
 	// Logging
 	Log LogConfig `mapstructure:"log"`
 }
@@ -45,6 +57,33 @@ type WorkerConfig struct {
 	GRPCPort       int `mapstructure:"grpc_port"`
 	HealthInterval int `mapstructure:"health_interval_s"`
 	MaxRestarts    int `mapstructure:"max_restarts"`
+}
+
+// SignalingConfig holds signaling/rendezvous server settings.
+type SignalingConfig struct {
+	URL  string `mapstructure:"url"`
+	Port int    `mapstructure:"port"`
+}
+
+// MeshConfig holds mesh networking settings.
+type MeshConfig struct {
+	WireGuardPort int    `mapstructure:"wireguard_port"`
+	GRPCPort      int    `mapstructure:"grpc_port"`
+	ConfigDir     string `mapstructure:"config_dir"`
+}
+
+// PeerConfig holds local peer identity settings.
+type PeerConfig struct {
+	ID       string `mapstructure:"id"`
+	Name     string `mapstructure:"name"`
+	Endpoint string `mapstructure:"endpoint"`
+}
+
+// ResilienceConfig holds fault tolerance settings.
+type ResilienceConfig struct {
+	MaxRetries      int `mapstructure:"max_retries"`
+	HealthInterval  int `mapstructure:"health_interval_s"`
+	CircuitMaxFails int `mapstructure:"circuit_max_fails"`
 }
 
 // LogConfig holds logging settings.
@@ -112,7 +151,34 @@ func setDefaults() {
 	viper.SetDefault("worker.health_interval_s", 5)
 	viper.SetDefault("worker.max_restarts", 3)
 
+	// Signaling
+	viper.SetDefault("signaling.url", "http://localhost:7777")
+	viper.SetDefault("signaling.port", 7777)
+
+	// Mesh
+	viper.SetDefault("mesh.wireguard_port", 51820)
+	viper.SetDefault("mesh.grpc_port", 50052)
+	viper.SetDefault("mesh.config_dir", filepath.Join(homeDir(), ".hivemind", "wg"))
+
+	// Peer
+	viper.SetDefault("peer.id", "")
+	viper.SetDefault("peer.name", "")
+	viper.SetDefault("peer.endpoint", "")
+
+	// Resilience
+	viper.SetDefault("resilience.max_retries", 3)
+	viper.SetDefault("resilience.health_interval_s", 5)
+	viper.SetDefault("resilience.circuit_max_fails", 3)
+
 	// Log
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "text")
+}
+
+func homeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	return home
 }

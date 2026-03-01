@@ -5,6 +5,107 @@ All notable changes to HiveMind will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-02-28
+
+### Phase 9: Distributed P2P Inference — Full Integration
+
+#### Phase 9A: Config + Bug Fixes
+
+##### Added
+- `internal/config/config.go` — `SignalingConfig`, `MeshConfig`, `PeerConfig`, `ResilienceConfig` structs with sane defaults
+- `internal/api/auth.go` — `APIKeyAuth` middleware (Bearer token via `HIVEMIND_API_KEY`) and `MaxBodyMiddleware`
+
+##### Changed
+- `internal/api/middleware.go` — Fixed rate limiter IP parsing: `net.SplitHostPort(r.RemoteAddr)` + `X-Forwarded-For` header support
+- `internal/api/middleware.go` — `CORSMiddleware` now accepts `allowedOrigins []string` instead of wildcard `*`
+- `internal/handlers/web.go` — `HandleHealthJSON` reads real data from `roomSvc.CurrentRoom()` instead of hardcoded values
+- `internal/api/server.go` — Accepts `*config.Config`, reads `HIVEMIND_API_KEY` env, applies auth + body limit middleware to `/v1` and `/room` routes
+- `cmd/hivemind/main.go` — Version bumped to `1.0.0`
+
+##### Security
+- Rate limiter correctly extracts client IP behind reverse proxies
+- CORS restricted to explicit origin whitelist (default: localhost:5173, localhost:8080)
+- API key auth protects inference and room management endpoints
+- Request body size limited via `http.MaxBytesReader`
+
+#### Phase 9B: RealRoomService
+
+##### Added
+- `internal/services/real_room.go` — Full room orchestrator: signaling → WireGuard → PeerRegistry → PeerGRPCServer with Create/Join/Leave/Stop/Status flows
+- `internal/infra/peer_id.go` — `GetOrCreatePeerID()` persists peer identity in `~/.hivemind/peer_id`
+
+#### Phase 9C: main.go Wiring + Signaling Subcommand
+
+##### Added
+- `internal/cli/signaling.go` — `hivemind signaling --port 7777` subcommand
+
+##### Changed
+- `cmd/hivemind/main.go` — Composition root rewritten: conditionally creates real services (WireGuard, Signaling, PeerRegistry, RealRoomService, RealInferenceService) when `HIVEMIND_MOCK != true`; mock mode preserved for development/testing
+
+#### Phase 9D: Docker Compose P2P Test
+
+##### Added
+- `docker-compose.p2p.yml` — 3-container stack (signaling + alice + bob) for P2P wiring validation
+- `tests/e2e/p2p_wiring.sh` — P2P E2E test: signaling health → room creation → peer join → peer visibility → leave → cleanup
+
+#### Phase 9E: Python forward_pass + tensor/transfer.py
+
+##### Changed
+- `worker/worker/tensor/transfer.py` — Implemented real tensor serialization: `serialize_tensor()` / `deserialize_tensor()` with numpy wire format (dtype + ndim + shape + raw bytes)
+- `worker/worker/inference/llm.py` — `forward_pass()` now runs real transformer layers (detects Llama/Mistral, GPT-NeoX, GPT-2/GPT-J architectures); identity fallback when model is None
+
+##### Added
+- `worker/tests/test_tensor.py` — 5 round-trip serialization tests
+- `worker/tests/test_forward.py` — 2 forward pass tests with mock model
+
+#### Phase 9F: DistributedInferenceService Fix
+
+##### Changed
+- `internal/services/real_inference.go` — Fixed layer loading bug: `ensureModelLoaded()` now loads only the local peer's assigned layers instead of all peers' layers; added `SetLocalPeerID()` method
+
+##### Removed
+- `internal/services/grpc_inference.go` — Deleted redundant file (functionality consolidated into `real_inference.go`)
+
+#### Phase 9G: Consolidation
+
+##### Added
+- `internal/services/helpers.go` — Extracted shared functions: `generateID()`, `assignLayers()`, `makeRange()`, `parseSize()`
+
+##### Changed
+- `internal/services/mock_room.go` — Removed duplicate function definitions, now imports from helpers.go
+
+#### Phase 9H: Web Dashboard API
+
+##### Added
+- `web/src/lib/api.ts` — Real API client: `fetchRoomStatus()`, `fetchHealth()`, `leaveRoom()`, `stopRoom()`, `chatCompletionStream()` (SSE async generator)
+- `web/src/hooks/useRoomStatus.ts` — `useRoomStatus()` hook polling `/api/room/status` every 5s
+
+##### Changed
+- `web/src/App.tsx` — Replaced `mockRoomStatus` with `useRoomStatus()` hook; added `LoadingScreen` and `NoRoomScreen` states; `RoomInfo` buttons call real leave/stop API
+- `web/src/components/ChatPlayground.tsx` — Replaced `mockStreamResponse` with real `chatCompletionStream()` async generator; added error state display
+
+#### Phase 9I: API Key Auth
+
+##### Added
+- `internal/api/auth.go` — `APIKeyAuth(key)` middleware: validates `Authorization: Bearer <key>`, returns 401/403 JSON errors; disabled when `HIVEMIND_API_KEY` env is empty
+
+#### Phase 9J: Rate Limiter Hardening
+
+##### Changed
+- `internal/api/server.go` — Rate limit configurable via `cfg.API.RateLimit`; request body size limited via `cfg.API.MaxBodyBytes`
+
+#### Phase 9K: Signaling Standalone
+
+##### Added
+- `signaling-server/main.go` — Standalone signaling server binary (~20 lines) for separate deployment
+- `signaling-server/Dockerfile` — Lightweight Alpine-based image for signaling-only deployments
+
+#### Phase 9L: E2E P2P Tests
+
+##### Changed
+- `docker-compose.test.yml` — Added `p2p` profile with signaling, alice-p2p, bob-p2p, and p2p-wiring-tests containers
+- `Makefile` — Added `test-e2e-p2p` target; updated `test-e2e-down` to clean up P2P stacks
+
 ## [0.8.0] - 2026-02-27
 
 ### Production Deployment + CI/CD

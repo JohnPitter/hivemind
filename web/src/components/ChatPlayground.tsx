@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Trash2, Cpu } from 'lucide-react';
 import type { ChatMessage } from '../types';
-import { mockStreamResponse } from '../lib/mock-data';
+import { chatCompletionStream } from '../lib/api';
 
 interface ChatPlaygroundProps {
   modelId: string;
@@ -11,6 +11,7 @@ export function ChatPlayground({ modelId }: ChatPlaygroundProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -21,26 +22,34 @@ export function ChatPlayground({ modelId }: ChatPlaygroundProps) {
     if (!input.trim() || isStreaming) return;
 
     const userMsg: ChatMessage = { role: 'user', content: input.trim() };
-    setMessages((prev) => [...prev, userMsg]);
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
     setInput('');
     setIsStreaming(true);
+    setError(null);
 
-    // Start streaming mock response
-    const words = mockStreamResponse(input);
     const assistantMsg: ChatMessage = { role: 'assistant', content: '' };
     setMessages((prev) => [...prev, assistantMsg]);
 
-    for (let i = 0; i < words.length; i++) {
-      await new Promise((r) => setTimeout(r, 40 + Math.random() * 80));
-      setMessages((prev) => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        updated[updated.length - 1] = {
-          ...last,
-          content: last.content + (i > 0 ? ' ' : '') + words[i],
-        };
-        return updated;
-      });
+    try {
+      const apiMessages = updatedMessages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      for await (const delta of chatCompletionStream(modelId, apiMessages)) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          updated[updated.length - 1] = {
+            ...last,
+            content: last.content + delta,
+          };
+          return updated;
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Stream failed');
     }
 
     setIsStreaming(false);
@@ -48,6 +57,7 @@ export function ChatPlayground({ modelId }: ChatPlaygroundProps) {
 
   const handleClear = () => {
     setMessages([]);
+    setError(null);
   };
 
   return (
@@ -69,6 +79,13 @@ export function ChatPlayground({ modelId }: ChatPlaygroundProps) {
           </button>
         )}
       </div>
+
+      {/* Error display */}
+      {error && (
+        <div className="mb-4 p-3 bg-red/10 border border-red/30 rounded-lg text-red text-sm">
+          {error}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 mb-4">
@@ -92,7 +109,7 @@ export function ChatPlayground({ modelId }: ChatPlaygroundProps) {
         {isStreaming && (
           <div className="flex items-center gap-2 text-xs text-text-muted pl-4">
             <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
-            Generating via 3-node tensor parallelism...
+            Generating via distributed inference...
           </div>
         )}
 

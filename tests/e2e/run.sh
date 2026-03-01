@@ -288,8 +288,136 @@ assert_status "GET /api/health returns 200" "200" "$status"
 printf "\n"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TEST SUITE 8: Error Handling & Edge Cases
+# TEST SUITE 8: Expanded Catalog (20 models, 5 types)
 # ═══════════════════════════════════════════════════════════════════════════
+
+printf "$(bold '▸ Expanded Catalog')\n"
+
+# T-CAT1: GET /v1/models/catalog returns all 20 models
+catalog_body=$(curl -sf "${API}/v1/models/catalog")
+assert_contains "Catalog has models array" "$catalog_body" '"models"'
+
+# Count models by parameter_size (unique to model entries)
+model_count=$(echo "$catalog_body" | grep -o '"parameter_size"' | wc -l)
+TOTAL=$((TOTAL + 1))
+if [ "$model_count" -eq 20 ]; then
+    PASS=$((PASS + 1))
+    printf "  $(green 'PASS') Catalog has 20 models (got %d)\n" "$model_count"
+else
+    FAIL=$((FAIL + 1))
+    printf "  $(red 'FAIL') Expected 20 models, got %d\n" "$model_count"
+fi
+
+# T-CAT2: New model types present
+assert_contains "Catalog has code models" "$catalog_body" '"type":"code"'
+assert_contains "Catalog has embedding models" "$catalog_body" '"type":"embedding"'
+assert_contains "Catalog has multimodal models" "$catalog_body" '"type":"multimodal"'
+assert_contains "Catalog has llm models" "$catalog_body" '"type":"llm"'
+assert_contains "Catalog has diffusion models" "$catalog_body" '"type":"diffusion"'
+
+# T-CAT3: Specific new models present
+assert_contains "DeepSeek Coder V2 236B in catalog" "$catalog_body" '"deepseek-ai/DeepSeek-Coder-V2-236B"'
+assert_contains "Qwen2-VL 72B in catalog" "$catalog_body" '"Qwen/Qwen2-VL-72B"'
+assert_contains "Nomic Embed in catalog" "$catalog_body" '"nomic-ai/nomic-embed-text-v1.5"'
+assert_contains "StarCoder2 15B in catalog" "$catalog_body" '"bigcode/StarCoder2-15B"'
+
+# T-CAT4: Suggestion for very high VRAM → largest model
+suggest_body=$(curl -sf "${API}/v1/models/catalog?vram_mb=200000")
+assert_contains "Suggestion for 200GB VRAM is DeepSeek 236B" "$suggest_body" '"deepseek-ai/DeepSeek-Coder-V2-236B"'
+
+# T-CAT5: Suggestion for small VRAM → embedding model
+suggest_body=$(curl -sf "${API}/v1/models/catalog?vram_mb=600")
+assert_contains "Suggestion for 600MB is Nomic Embed" "$suggest_body" '"nomic-ai/nomic-embed-text-v1.5"'
+
+printf "\n"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST SUITE 9: Resource Donation via API
+# ═══════════════════════════════════════════════════════════════════════════
+
+printf "$(bold '▸ Resource Donation')\n"
+
+# Leave current room first (from earlier tests)
+curl -sf -X DELETE "${API}/room/leave" > /dev/null 2>&1
+
+# T-DON1: Create room with donation_pct preserved in response
+body=$(curl -s -w "\n%{http_code}" \
+    -X POST "${API}/room/create" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model_id": "TinyLlama/TinyLlama-1.1B",
+        "model_type": "llm",
+        "max_peers": 5,
+        "resources": {
+            "gpu_name": "NVIDIA RTX 3060",
+            "vram_total_mb": 12288,
+            "vram_free_mb": 10240,
+            "ram_total_mb": 32768,
+            "ram_free_mb": 24576,
+            "cuda_available": true,
+            "platform": "Linux",
+            "donation_pct": 50
+        }
+    }')
+status=$(echo "$body" | tail -1)
+body_content=$(echo "$body" | sed '$d')
+assert_status "Create with donation_pct returns 201" "201" "$status"
+assert_contains "Donation pct preserved" "$body_content" '"donation_pct":50'
+assert_contains "Room is active (50% of 9728 > 2048)" "$body_content" '"state":"active"'
+
+# Leave to test next scenario
+curl -sf -X DELETE "${API}/room/leave" > /dev/null 2>&1
+
+# T-DON2: Create with code model auto-fills type
+body=$(curl -s -w "\n%{http_code}" \
+    -X POST "${API}/room/create" \
+    -H "Content-Type: application/json" \
+    -d '{"model_id": "Qwen/Qwen2.5-Coder-7B", "max_peers": 3}')
+status=$(echo "$body" | tail -1)
+body_content=$(echo "$body" | sed '$d')
+assert_status "Create with code model returns 201" "201" "$status"
+assert_contains "Auto-filled type is code" "$body_content" '"model_type":"code"'
+
+# Leave to test join
+curl -sf -X DELETE "${API}/room/leave" > /dev/null 2>&1
+
+# T-DON3: Join with donation_pct in resources
+body=$(curl -s -w "\n%{http_code}" \
+    -X POST "${API}/room/join" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "invite_code": "test-donation-join",
+        "resources": {
+            "gpu_name": "NVIDIA RTX 3070",
+            "vram_total_mb": 8192,
+            "vram_free_mb": 6144,
+            "ram_total_mb": 16384,
+            "ram_free_mb": 12288,
+            "cuda_available": true,
+            "platform": "Windows",
+            "donation_pct": 75
+        }
+    }')
+status=$(echo "$body" | tail -1)
+body_content=$(echo "$body" | sed '$d')
+assert_status "Join with donation returns 200" "200" "$status"
+assert_contains "Join preserves donation_pct" "$body_content" '"donation_pct":75'
+assert_contains "Joined room is active" "$body_content" '"state":"active"'
+assert_contains "Self has layers" "$body_content" '"layers"'
+
+# Leave for cleanup
+curl -sf -X DELETE "${API}/room/leave" > /dev/null 2>&1
+
+printf "\n"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST SUITE 10: Error Handling & Edge Cases
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Ensure a room exists for chat-related tests below
+curl -sf -X POST "${API}/room/create" \
+    -H "Content-Type: application/json" \
+    -d '{"model_id":"TinyLlama/TinyLlama-1.1B","max_peers":3}' > /dev/null 2>&1
 
 printf "$(bold '▸ Error Handling')\n"
 

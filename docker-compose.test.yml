@@ -172,5 +172,85 @@ services:
       - ALICE_URL=http://alice-real:8080
       - BOB_URL=http://bob-real:8080
 
+  # ── P2P Wiring: Signaling + Alice + Bob (real mode) ──────────────────
+  signaling:
+    profiles: ["p2p"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/hivemind", "signaling", "--port", "7777"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7777/signal/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  alice-p2p:
+    profiles: ["p2p"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_MOCK=false
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_SIGNALING_URL=http://signaling:7777
+      - HIVEMIND_PEER_ID=alice-001
+      - HIVEMIND_PEER_ENDPOINT=alice-p2p:51820
+      - HIVEMIND_LOG_LEVEL=debug
+      - CUDA_VISIBLE_DEVICES=
+    command: ["/hivemind", "serve", "--host", "0.0.0.0"]
+    depends_on:
+      signaling:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  bob-p2p:
+    profiles: ["p2p"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_MOCK=false
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_SIGNALING_URL=http://signaling:7777
+      - HIVEMIND_PEER_ID=bob-002
+      - HIVEMIND_PEER_ENDPOINT=bob-p2p:51820
+      - HIVEMIND_LOG_LEVEL=debug
+      - CUDA_VISIBLE_DEVICES=
+    command: ["/hivemind", "serve", "--host", "0.0.0.0"]
+    depends_on:
+      signaling:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  p2p-wiring-tests:
+    profiles: ["p2p"]
+    image: curlimages/curl:8.12.1
+    depends_on:
+      alice-p2p:
+        condition: service_healthy
+      bob-p2p:
+        condition: service_healthy
+    volumes:
+      - ./tests/e2e:/tests:ro
+    entrypoint: ["sh", "/tests/p2p_wiring.sh"]
+    environment:
+      - ALICE_URL=http://alice-p2p:8080
+      - BOB_URL=http://bob-p2p:8080
+      - SIGNALING_URL=http://signaling:7777
+
 volumes:
   hf-cache:

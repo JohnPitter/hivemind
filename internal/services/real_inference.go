@@ -18,11 +18,12 @@ import (
 // Python worker process via gRPC. The worker loads and runs the actual
 // model on GPU or CPU.
 type RealInferenceService struct {
-	roomSvc RoomService
-	wm      *infra.WorkerManager
-	mu      sync.Mutex
-	started bool
-	loaded  bool
+	roomSvc     RoomService
+	wm          *infra.WorkerManager
+	localPeerID string
+	mu          sync.Mutex
+	started     bool
+	loaded      bool
 }
 
 // NewRealInferenceService creates an inference service backed by the Python worker.
@@ -31,6 +32,11 @@ func NewRealInferenceService(roomSvc RoomService, wm *infra.WorkerManager) *Real
 		roomSvc: roomSvc,
 		wm:      wm,
 	}
+}
+
+// SetLocalPeerID sets the local peer ID for layer filtering.
+func (s *RealInferenceService) SetLocalPeerID(id string) {
+	s.localPeerID = id
 }
 
 // ensureWorkerRunning starts the Python worker if not already running.
@@ -77,11 +83,17 @@ func (s *RealInferenceService) ensureModelLoaded(ctx context.Context) error {
 		return models.ErrWorkerUnavail
 	}
 
-	// Build layer list from the local peer's assignment
+	// Build layer list from the LOCAL peer's assignment only
 	var layers []int32
 	for _, peer := range room.Peers {
+		if s.localPeerID != "" && peer.ID != s.localPeerID {
+			continue
+		}
 		for _, l := range peer.Layers {
 			layers = append(layers, int32(l))
+		}
+		if s.localPeerID != "" {
+			break
 		}
 	}
 

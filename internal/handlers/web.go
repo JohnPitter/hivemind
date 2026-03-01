@@ -47,11 +47,17 @@ func (h *WebHandler) HandleRoomStatusJSON(w http.ResponseWriter, r *http.Request
 
 // HandleHealthJSON serves health status as JSON.
 func (h *WebHandler) HandleHealthJSON(w http.ResponseWriter, _ *http.Request) {
+	room := h.roomSvc.CurrentRoom()
+	modelLoaded := room != nil
+	peerCount := 0
+	if room != nil {
+		peerCount = len(room.Peers)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":          "ok",
-		"worker_healthy":  true,
-		"peers_connected": 3,
-		"model_loaded":    true,
+		"worker_healthy":  modelLoaded,
+		"peers_connected": peerCount,
+		"model_loaded":    modelLoaded,
 	})
 }
 

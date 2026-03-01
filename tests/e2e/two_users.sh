@@ -180,7 +180,7 @@ check_status "[Alice] Room created (201)" "201" "$status"
 check_contains "[Alice] Has invite_code" "$body" '"invite_code"'
 check_contains "[Alice] Has room ID" "$body" '"id"'
 check_contains "[Alice] Model matches" "$body" '"model_id":"meta-llama/Llama-3-70B"'
-check_contains "[Alice] State is active" "$body" '"state":"active"'
+check_contains "[Alice] State is pending (host VRAM insufficient for 70B)" "$body" '"state":"pending"'
 check_contains "[Alice] Is host" "$body" '"is_host":true'
 check_contains "[Alice] Has total_layers" "$body" '"total_layers"'
 
@@ -200,8 +200,8 @@ check_contains "[Bob] Still no model" "$body" '"model_loaded":false'
 # PHASE 3: BOB JOINS — Peer with RTX 3060
 # ═══════════════════════════════════════════════════════════════════════════
 
-step "Bob Joins Room" \
-     "Bob joins Alice's room using the invite code"
+step "Bob Joins Room (50% Donation)" \
+     "Bob joins Alice's room with 50% resource donation"
 
 response=$(curl -s -w "\n%{http_code}" \
     -X POST "${BOB}/room/join" \
@@ -215,7 +215,8 @@ response=$(curl -s -w "\n%{http_code}" \
             \"ram_total_mb\": 32768,
             \"ram_free_mb\": 24576,
             \"cuda_available\": true,
-            \"platform\": \"Linux\"
+            \"platform\": \"Linux\",
+            \"donation_pct\": 50
         }
     }")
 status=$(echo "$response" | tail -1)
@@ -228,6 +229,7 @@ check_contains "[Bob] Has peers" "$body" '"peers":\['
 check_contains "[Bob] Has host peer" "$body" '"is_host":true'
 check_contains "[Bob] Has layers" "$body" '"layers"'
 check_contains "[Bob] Model is Llama-3-70B" "$body" '"model_id":"meta-llama/Llama-3-70B"'
+check_contains "[Bob] Donation pct preserved" "$body" '"donation_pct":50'
 
 # Bob's health should now show model loaded
 body=$(curl -sf "${BOB}/health")
@@ -461,8 +463,8 @@ check_status "[Bob] Room status 404" "404" "$status"
 # PHASE 12: BOB REJOINS — Different GPU this time
 # ═══════════════════════════════════════════════════════════════════════════
 
-step "Bob Rejoins with Different GPU" \
-     "Bob comes back with an RTX 4070 Ti and joins the room again"
+step "Bob Rejoins with Different GPU (100% Donation)" \
+     "Bob comes back with an RTX 4070 Ti — donates everything"
 
 response=$(curl -s -w "\n%{http_code}" \
     -X POST "${BOB}/room/join" \
@@ -476,7 +478,8 @@ response=$(curl -s -w "\n%{http_code}" \
             \"ram_total_mb\": 65536,
             \"ram_free_mb\": 58368,
             \"cuda_available\": true,
-            \"platform\": \"Windows\"
+            \"platform\": \"Windows\",
+            \"donation_pct\": 100
         }
     }")
 status=$(echo "$response" | tail -1)
@@ -486,6 +489,7 @@ check_status "[Bob] Rejoin returns 200" "200" "$status"
 check_contains "[Bob] Room active after rejoin" "$body" '"state":"active"'
 check_contains "[Bob] Has peers" "$body" '"peers"'
 check_contains "[Bob] Has layers" "$body" '"layers"'
+check_contains "[Bob] Donation is 100%" "$body" '"donation_pct":100'
 
 bob_health=$(curl -sf "${BOB}/health")
 check_contains "[Bob] Model loaded after rejoin" "$bob_health" '"model_loaded":true'

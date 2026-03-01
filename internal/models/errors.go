@@ -18,6 +18,10 @@ var (
 	ErrPeerOffline      = errors.New("peer is offline")
 	ErrInsufficientVRAM = errors.New("insufficient VRAM to participate")
 
+	// Catalog errors
+	ErrModelNotInCatalog  = errors.New("model not found in catalog")
+	ErrRoomPendingTimeout = errors.New("room pending timeout: insufficient resources after 5 minutes")
+
 	// Inference errors
 	ErrModelNotLoaded   = errors.New("model not loaded")
 	ErrInferenceTimeout = errors.New("inference request timed out")

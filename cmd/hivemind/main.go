@@ -15,20 +15,59 @@ import (
 )
 
 var (
-	Version = "0.2.0"
+	Version = "1.0.0"
 	cfgFile string
 	verbose bool
 )
 
 func main() {
-	// Initialize services — real inference is the default, mock is opt-in
-	roomSvc := services.NewMockRoomService()
+	useMock := os.Getenv("HIVEMIND_MOCK") == "true"
+
+	// Load config early for service construction
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		cfg = &config.Config{}
+		cfg.API.RateLimit = 60
+		cfg.API.MaxBodyBytes = 10 * 1024 * 1024
+		cfg.Signaling.URL = "http://localhost:7777"
+		cfg.Signaling.Port = 7777
+		cfg.Mesh.WireGuardPort = 51820
+		cfg.Mesh.GRPCPort = 50052
+		cfg.Worker.GRPCPort = 50051
+		cfg.Worker.MaxRestarts = 3
+	}
+
+	var roomSvc services.RoomService
+	var peerRegistry *infra.PeerRegistry
+
+	if useMock {
+		roomSvc = services.NewMockRoomService()
+		logger.Init(logger.LevelInfo)
+		logger.Info("using mock services", "reason", "HIVEMIND_MOCK=true")
+	} else {
+		peerID := infra.GetOrCreatePeerID()
+
+		// Peer endpoint from config or env
+		endpoint := cfg.Peer.Endpoint
+		if endpoint == "" {
+			endpoint = infra.GetLocalIP() + ":51820"
+		}
+
+		wgManager := infra.NewWireGuardManager(cfg.Mesh.ConfigDir)
+		sigClient := infra.NewSignalingClient(cfg.Signaling.URL)
+		peerRegistry = infra.NewPeerRegistry(peerID, cfg.Mesh.GRPCPort)
+
+		roomSvc = services.NewRealRoomService(services.RealRoomConfig{
+			LocalPeerID:   peerID,
+			Endpoint:      endpoint,
+			WireGuardPort: cfg.Mesh.WireGuardPort,
+			GRPCPort:      cfg.Mesh.GRPCPort,
+		}, sigClient, wgManager, peerRegistry)
+	}
 
 	var infSvc services.InferenceService
-	if os.Getenv("HIVEMIND_MOCK") == "true" {
+	if useMock {
 		infSvc = services.NewMockInferenceService(roomSvc)
-		logger.Init(logger.LevelInfo)
-		logger.Info("using mock inference service", "reason", "HIVEMIND_MOCK=true")
 	} else {
 		pythonCmd := "python3"
 		workerDir := "/app/worker"
@@ -40,20 +79,27 @@ func main() {
 		}
 
 		wm := infra.NewWorkerManager(infra.WorkerConfig{
-			Port:        50051,
+			Port:        cfg.Worker.GRPCPort,
 			PythonCmd:   pythonCmd,
 			WorkerDir:   workerDir,
-			MaxRestarts: 3,
+			MaxRestarts: cfg.Worker.MaxRestarts,
 		})
-		infSvc = services.NewRealInferenceService(roomSvc, wm)
+		realInf := services.NewRealInferenceService(roomSvc, wm)
+		if peerRegistry != nil {
+			peerID := infra.GetOrCreatePeerID()
+			realInf.SetLocalPeerID(peerID)
+		}
+		infSvc = realInf
 	}
+
+	_ = peerRegistry // used by future distributed inference wiring
 
 	rootCmd := &cobra.Command{
 		Use:   "hivemind",
 		Short: "Distributed P2P AI inference",
 		Long:  "HiveMind — Share bare metal resources to run large AI models cooperatively via tensor parallelism.",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(cfgFile)
+			loadedCfg, err := config.Load(cfgFile)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
@@ -63,7 +109,7 @@ func main() {
 				level = logger.LevelDebug
 			}
 			logger.Init(level)
-			logger.Debug("config loaded", "path", cfg.ConfigPath)
+			logger.Debug("config loaded", "path", loadedCfg.ConfigPath)
 
 			return nil
 		},
@@ -80,9 +126,10 @@ func main() {
 	webFS, _ := fs.Sub(webpkg.Dist, "dist")
 
 	rootCmd.AddCommand(versionCmd())
-	rootCmd.AddCommand(cli.ServeCmd(webFS, roomSvc, infSvc))
+	rootCmd.AddCommand(cli.ServeCmd(webFS, roomSvc, infSvc, cfg))
 	rootCmd.AddCommand(cli.WebCmd(webFS, roomSvc, infSvc))
 	rootCmd.AddCommand(cli.HealthCheckCmd())
+	rootCmd.AddCommand(cli.SignalingCmd())
 	cli.RegisterCommands(rootCmd, roomSvc, infSvc)
 
 	if err := rootCmd.Execute(); err != nil {

@@ -29,8 +29,9 @@ func TestMockRoomService_Create(t *testing.T) {
 	if room.ModelID != "meta-llama/Llama-3-70B" {
 		t.Errorf("model ID = %q, want %q", room.ModelID, "meta-llama/Llama-3-70B")
 	}
-	if room.State != models.RoomStateActive {
-		t.Errorf("state = %q, want %q", room.State, models.RoomStateActive)
+	// 70B requires 40960MB but default host has ~9728MB usable → pending
+	if room.State != models.RoomStatePending {
+		t.Errorf("state = %q, want %q (host VRAM insufficient for 70B)", room.State, models.RoomStatePending)
 	}
 	if len(room.Peers) != 1 {
 		t.Errorf("peers = %d, want 1", len(room.Peers))
@@ -43,6 +44,25 @@ func TestMockRoomService_Create(t *testing.T) {
 	}
 	if len(room.Peers[0].Layers) == 0 {
 		t.Error("host should have layers assigned")
+	}
+}
+
+func TestMockRoomService_Create_SufficientResources(t *testing.T) {
+	svc := NewMockRoomService()
+
+	room, err := svc.Create(context.Background(), models.RoomConfig{
+		ModelID:   "TinyLlama/TinyLlama-1.1B",
+		ModelType: models.ModelTypeLLM,
+		MaxPeers:  3,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// TinyLlama requires 2048MB, default host has ~9728MB → active
+	if room.State != models.RoomStateActive {
+		t.Errorf("state = %q, want %q (host VRAM sufficient for TinyLlama)", room.State, models.RoomStateActive)
 	}
 }
 

@@ -3,12 +3,28 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joaopedro/hivemind/internal/models"
 	"github.com/joaopedro/hivemind/internal/services"
 	"github.com/spf13/cobra"
 )
+
+// donationOption represents a resource donation level.
+type donationOption struct {
+	Pct   int
+	Label string
+	Desc  string
+}
+
+var donationOptions = []donationOption{
+	{25, "Light", "Keep most resources for local use"},
+	{50, "Balanced", "Share half of your resources"},
+	{75, "Generous", "Contribute most of your resources"},
+	{100, "All-in", "Donate everything to the hive"},
+}
 
 func joinCmd(roomSvc services.RoomService) *cobra.Command {
 	return &cobra.Command{
@@ -31,8 +47,6 @@ func joinCmd(roomSvc services.RoomService) *cobra.Command {
 				"Establishing mesh connection...",
 				"Syncing room state...",
 				"Detecting local resources...",
-				"Receiving layer assignment...",
-				"Loading model layers...",
 			}
 
 			for _, step := range steps {
@@ -51,6 +65,43 @@ func joinCmd(roomSvc services.RoomService) *cobra.Command {
 				Platform:  "Windows",
 			}
 
+			// Show detected resources
+			fmt.Println()
+			fmt.Println(BoldStyle.Render("  Detected resources:"))
+			fmt.Printf("  %s %s (%s VRAM)\n",
+				LabelStyle.Render("GPU:"),
+				ValueStyle.Render(resources.GPUName),
+				FormatVRAM(resources.VRAMFree),
+			)
+			fmt.Printf("  %s %s\n",
+				LabelStyle.Render("RAM:"),
+				FormatVRAM(resources.RAMFree),
+			)
+			fmt.Println()
+
+			// Interactive donation selection
+			donationPct := interactiveDonationSelect()
+			resources.DonationPct = donationPct
+
+			// Show donation summary
+			fmt.Println()
+			fmt.Printf("  %s %s VRAM | %s RAM\n",
+				HighlightStyle.Render("Donating:"),
+				ValueStyle.Render(FormatVRAM(resources.TotalUsableVRAM())),
+				ValueStyle.Render(FormatVRAM(resources.TotalUsableRAM())),
+			)
+			fmt.Println()
+
+			// Continue with remaining connection steps
+			finalSteps := []string{
+				"Receiving layer assignment...",
+				"Loading model layers...",
+			}
+			for _, step := range finalSteps {
+				fmt.Printf("  %s %s\n", SyncingStyle.Render("◌"), step)
+				time.Sleep(200 * time.Millisecond)
+			}
+
 			room, err := roomSvc.Join(context.Background(), inviteCode, resources)
 			if err != nil {
 				return fmt.Errorf("failed to join room: %w", err)
@@ -62,6 +113,34 @@ func joinCmd(roomSvc services.RoomService) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// interactiveDonationSelect prompts the user to choose a donation percentage.
+func interactiveDonationSelect() int {
+	fmt.Println(BoldStyle.Render("  How much do you want to donate?"))
+	fmt.Println()
+
+	for i, opt := range donationOptions {
+		num := HighlightStyle.Render(fmt.Sprintf("  [%d]", i+1))
+		pct := ValueStyle.Render(fmt.Sprintf("%3d%%", opt.Pct))
+		label := BoldStyle.Render(opt.Label)
+		desc := DimStyle.Render("— " + opt.Desc)
+		fmt.Printf("%s %s %s %s\n", num, pct, label, desc)
+	}
+
+	fmt.Println()
+	fmt.Print(LabelStyle.Render("  Choose (1-" + strconv.Itoa(len(donationOptions)) + "): "))
+
+	var input string
+	fmt.Scanln(&input)
+
+	choice, err := strconv.Atoi(strings.TrimSpace(input))
+	if err != nil || choice < 1 || choice > len(donationOptions) {
+		fmt.Println(DimStyle.Render("  Defaulting to 50% (Balanced)"))
+		return 50
+	}
+
+	return donationOptions[choice-1].Pct
 }
 
 func renderRoomJoined(room *models.Room) {

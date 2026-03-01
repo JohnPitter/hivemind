@@ -2,22 +2,23 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/joaopedro/hivemind/internal/catalog"
 	"github.com/joaopedro/hivemind/internal/models"
 )
 
+const pendingTimeout = 5 * time.Minute
+
 // MockRoomService provides realistic mock data for CLI/Web development.
 type MockRoomService struct {
-	mu      sync.RWMutex
-	room    *models.Room
-	startAt time.Time
+	mu           sync.RWMutex
+	room         *models.Room
+	startAt      time.Time
+	pendingTimer *time.Timer
 }
 
 // NewMockRoomService creates a mock room service.
@@ -36,39 +37,67 @@ func (s *MockRoomService) Create(_ context.Context, cfg models.RoomConfig) (*mod
 	roomID := generateID(8)
 	inviteCode := generateID(6)
 
+	hostResources := models.ResourceSpec{
+		GPUName:   "NVIDIA RTX 3060",
+		VRAMTotal: 12288,
+		VRAMFree:  10240,
+		RAMTotal:  32768,
+		RAMFree:   24576,
+		CUDAAvail: true,
+		Platform:  "Windows",
+	}
+
+	// Use resources from config if provided
+	if cfg.Resources != nil {
+		hostResources = *cfg.Resources
+	}
+
+	// Determine initial state based on resource check
+	state := models.RoomStateActive
+	hostVRAM := hostResources.TotalUsableVRAM()
+	modelReqs := catalog.Lookup(cfg.ModelID)
+
+	if modelReqs != nil && hostVRAM < modelReqs.MinVRAMMB {
+		state = models.RoomStatePending
+	}
+
 	s.startAt = time.Now()
 	s.room = &models.Room{
 		ID:          roomID,
 		InviteCode:  inviteCode,
 		ModelID:     cfg.ModelID,
 		ModelType:   cfg.ModelType,
-		State:       models.RoomStateActive,
+		State:       state,
 		HostID:      "self",
 		MaxPeers:    cfg.MaxPeers,
-		TotalLayers: layersForModel(cfg.ModelID),
+		TotalLayers: catalog.LayersForModel(cfg.ModelID),
 		CreatedAt:   time.Now(),
 		Peers: []models.Peer{
 			{
-				ID:    "self",
-				Name:  "you (host)",
-				IP:    "10.0.0.1",
-				State: models.PeerStateReady,
-				Resources: models.ResourceSpec{
-					GPUName:   "NVIDIA RTX 3060",
-					VRAMTotal: 12288,
-					VRAMFree:  10240,
-					RAMTotal:  32768,
-					RAMFree:   24576,
-					CUDAAvail: true,
-					Platform:  "Windows",
-				},
-				JoinedAt: time.Now(),
-				IsHost:   true,
+				ID:        "self",
+				Name:      "you (host)",
+				IP:        "10.0.0.1",
+				State:     models.PeerStateReady,
+				Resources: hostResources,
+				JoinedAt:  time.Now(),
+				IsHost:    true,
 			},
 		},
 	}
 
 	assignLayers(s.room)
+
+	// Start pending timer if resources insufficient
+	if state == models.RoomStatePending {
+		s.pendingTimer = time.AfterFunc(pendingTimeout, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.room != nil && s.room.State == models.RoomStatePending {
+				s.room.State = models.RoomStateClosed
+				s.room = nil
+			}
+		})
+	}
 
 	return s.room, nil
 }
@@ -96,7 +125,7 @@ func (s *MockRoomService) Join(_ context.Context, inviteCode string, resources m
 		State:       models.RoomStateActive,
 		HostID:      "host-abc",
 		MaxPeers:    5,
-		TotalLayers: layersForModel(modelID),
+		TotalLayers: catalog.LayersForModel(modelID),
 		CreatedAt:   time.Now().Add(-10 * time.Minute),
 		Peers: []models.Peer{
 			{
@@ -143,6 +172,22 @@ func (s *MockRoomService) Join(_ context.Context, inviteCode string, resources m
 		},
 	}
 
+	// If room was pending, check if combined VRAM is now sufficient
+	if s.room.State == models.RoomStatePending {
+		var totalVRAM int64
+		for _, p := range s.room.Peers {
+			totalVRAM += p.Resources.TotalUsableVRAM()
+		}
+		modelReqs := catalog.Lookup(s.room.ModelID)
+		if modelReqs != nil && totalVRAM >= modelReqs.MinVRAMMB {
+			s.room.State = models.RoomStateActive
+			if s.pendingTimer != nil {
+				s.pendingTimer.Stop()
+				s.pendingTimer = nil
+			}
+		}
+	}
+
 	assignLayers(s.room)
 
 	return s.room, nil
@@ -156,6 +201,7 @@ func (s *MockRoomService) Leave(_ context.Context) error {
 		return models.ErrNotInRoom
 	}
 
+	s.stopPendingTimer()
 	s.room = nil
 	return nil
 }
@@ -168,6 +214,7 @@ func (s *MockRoomService) Stop(_ context.Context) error {
 		return models.ErrNotInRoom
 	}
 
+	s.stopPendingTimer()
 	s.room.State = models.RoomStateClosed
 	s.room = nil
 	return nil
@@ -204,87 +251,12 @@ func (s *MockRoomService) CurrentRoom() *models.Room {
 	return s.room
 }
 
-// generateID creates a random hex string of n bytes.
-func generateID(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+// stopPendingTimer cancels the pending timer if active. Must be called with mu held.
+func (s *MockRoomService) stopPendingTimer() {
+	if s.pendingTimer != nil {
+		s.pendingTimer.Stop()
+		s.pendingTimer = nil
 	}
-	return hex.EncodeToString(b)
-}
-
-// layersForModel returns a realistic layer count based on model name.
-func layersForModel(modelID string) int {
-	switch {
-	case containsInsensitive(modelID, "70b"):
-		return 80
-	case containsInsensitive(modelID, "13b"):
-		return 40
-	case containsInsensitive(modelID, "7b"):
-		return 32
-	case containsInsensitive(modelID, "3b"):
-		return 26
-	case containsInsensitive(modelID, "1.1b"), containsInsensitive(modelID, "tinyllama"):
-		return 22
-	default:
-		return 32
-	}
-}
-
-// assignLayers distributes model layers across peers by available VRAM.
-func assignLayers(room *models.Room) {
-	if len(room.Peers) == 0 || room.TotalLayers == 0 {
-		return
-	}
-
-	var totalVRAM int64
-	for _, p := range room.Peers {
-		totalVRAM += p.Resources.TotalUsableVRAM()
-	}
-
-	if totalVRAM == 0 {
-		// Equal distribution fallback
-		perPeer := room.TotalLayers / len(room.Peers)
-		offset := 0
-		for i := range room.Peers {
-			count := perPeer
-			if i == len(room.Peers)-1 {
-				count = room.TotalLayers - offset
-			}
-			room.Peers[i].Layers = makeRange(offset, offset+count)
-			offset += count
-		}
-		return
-	}
-
-	// Proportional distribution by VRAM
-	offset := 0
-	for i := range room.Peers {
-		peerVRAM := room.Peers[i].Resources.TotalUsableVRAM()
-		proportion := float64(peerVRAM) / float64(totalVRAM)
-		count := int(proportion * float64(room.TotalLayers))
-
-		if count < 1 {
-			count = 1
-		}
-		if i == len(room.Peers)-1 {
-			count = room.TotalLayers - offset
-		}
-		if offset+count > room.TotalLayers {
-			count = room.TotalLayers - offset
-		}
-
-		room.Peers[i].Layers = makeRange(offset, offset+count)
-		offset += count
-	}
-}
-
-func makeRange(start, end int) []int {
-	r := make([]int, 0, end-start)
-	for i := start; i < end; i++ {
-		r = append(r, i)
-	}
-	return r
 }
 
 func containsInsensitive(s, substr string) bool {
