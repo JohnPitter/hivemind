@@ -1,0 +1,14 @@
+apiVersion: v2
+name: hivemind
+description: HiveMind - Distributed P2P AI Inference
+type: application
+version: 0.1.0
+appVersion: "1.1.0"
+keywords:
+  - ai
+  - inference
+  - p2p
+  - distributed
+  - gpu
+maintainers:
+  - name: John Pitter

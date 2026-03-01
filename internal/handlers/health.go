@@ -26,6 +26,11 @@ func (h *HealthHandler) SetMetrics(m *services.MetricsCollector) {
 	h.metrics = m
 }
 
+// GetMetrics returns the metrics collector for use by other handlers.
+func (h *HealthHandler) GetMetrics() *services.MetricsCollector {
+	return h.metrics
+}
+
 // HealthResponse contains system health information.
 type HealthResponse struct {
 	Status         string `json:"status"`
@@ -44,7 +49,7 @@ func (h *HealthHandler) Health(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Try to get room status for peer count
-	status, err := h.roomSvc.Status(context.Background())
+	status, err := h.roomSvc.Status(context.Background(), h.roomSvc.ActiveRoomID())
 	if err == nil {
 		resp.PeersConnected = len(status.Room.Peers)
 		resp.ModelLoaded = status.Room.ModelID != ""

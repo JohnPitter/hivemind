@@ -9,7 +9,9 @@ import { DistributedPanel } from './components/DistributedPanel';
 import { useRoomStatus } from './hooks/useRoomStatus';
 import { leaveRoom, stopRoom } from './lib/api';
 import type { RoomStatus } from './types';
-import { Loader2, WifiOff } from 'lucide-react';
+import { CreateRoomDialog } from './components/CreateRoomDialog';
+import { JoinRoomDialog } from './components/JoinRoomDialog';
+import { Loader2, WifiOff, Plus, UserPlus, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
 
 type Tab = 'dashboard' | 'chat' | 'room';
 
@@ -82,6 +84,11 @@ function LoadingScreen() {
 }
 
 function NoRoomScreen() {
+  const [showCreate, setShowCreate] = useState(false);
+  const [showJoin, setShowJoin] = useState(false);
+  const [showCli, setShowCli] = useState(false);
+  const { refetch } = useRoomStatus();
+
   return (
     <div className="flex items-center justify-center h-screen bg-bg-primary">
       <div className="text-center max-w-md">
@@ -90,17 +97,58 @@ function NoRoomScreen() {
         <p className="text-text-secondary text-sm mb-6">
           Create or join a room to start distributed inference.
         </p>
-        <div className="bg-bg-secondary border border-border rounded-xl p-4 text-left space-y-3">
-          <div>
-            <p className="text-text-muted text-xs mb-1">Create a room:</p>
-            <code className="text-amber text-sm">hivemind create --model meta-llama/Llama-3-70B</code>
-          </div>
-          <div>
-            <p className="text-text-muted text-xs mb-1">Join a room:</p>
-            <code className="text-amber text-sm">hivemind join &lt;invite-code&gt;</code>
-          </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-3 justify-center mb-6">
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-5 py-2.5 bg-amber text-black text-sm font-medium rounded-lg hover:bg-amber-light transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Create Room
+          </button>
+          <button
+            onClick={() => setShowJoin(true)}
+            className="flex items-center gap-2 px-5 py-2.5 bg-bg-secondary border border-border text-text-primary text-sm font-medium rounded-lg hover:bg-bg-hover hover:border-amber transition-colors"
+          >
+            <UserPlus className="w-4 h-4" />
+            Join Room
+          </button>
         </div>
+
+        {/* CLI Instructions (collapsible) */}
+        <button
+          onClick={() => setShowCli(!showCli)}
+          className="flex items-center gap-1.5 text-text-muted text-xs hover:text-text-secondary transition-colors mx-auto mb-2"
+        >
+          <Terminal className="w-3.5 h-3.5" />
+          CLI Instructions
+          {showCli ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        </button>
+        {showCli && (
+          <div className="bg-bg-secondary border border-border rounded-xl p-4 text-left space-y-3">
+            <div>
+              <p className="text-text-muted text-xs mb-1">Create a room:</p>
+              <code className="text-amber text-sm">hivemind create --model meta-llama/Llama-3-70B</code>
+            </div>
+            <div>
+              <p className="text-text-muted text-xs mb-1">Join a room:</p>
+              <code className="text-amber text-sm">hivemind join &lt;invite-code&gt;</code>
+            </div>
+          </div>
+        )}
       </div>
+
+      <CreateRoomDialog
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={refetch}
+      />
+      <JoinRoomDialog
+        open={showJoin}
+        onClose={() => setShowJoin(false)}
+        onJoined={refetch}
+      />
     </div>
   );
 }

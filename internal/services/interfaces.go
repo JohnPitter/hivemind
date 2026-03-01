@@ -6,14 +6,17 @@ import (
 	"github.com/joaopedro/hivemind/internal/models"
 )
 
-// RoomService manages room lifecycle.
+// RoomService manages room lifecycle. Supports multiple concurrent rooms.
 type RoomService interface {
 	Create(ctx context.Context, cfg models.RoomConfig) (*models.Room, error)
 	Join(ctx context.Context, inviteCode string, resources models.ResourceSpec) (*models.Room, error)
-	Leave(ctx context.Context) error
-	Stop(ctx context.Context) error
-	Status(ctx context.Context) (*models.RoomStatus, error)
+	Leave(ctx context.Context, roomID string) error
+	Stop(ctx context.Context, roomID string) error
+	Status(ctx context.Context, roomID string) (*models.RoomStatus, error)
 	CurrentRoom() *models.Room
+	GetRoom(roomID string) *models.Room
+	ListRooms() []*models.Room
+	ActiveRoomID() string
 }
 
 // InferenceService handles AI inference routing.

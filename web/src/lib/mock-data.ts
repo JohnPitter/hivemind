@@ -84,6 +84,12 @@ export const mockRoomStatus: RoomStatus = {
     compression_ratio: 0.62,
     forward_pass_avg_ms: 142.5,
     is_distributed: true,
+    tokens_generated: 3842,
+    tokens_per_second: 14.7,
+    avg_token_latency_ms: 68.0,
+    embed_avg_ms: 12.3,
+    sample_avg_ms: 5.1,
+    generation_requests: 47,
   },
 };
 

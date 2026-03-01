@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from . import worker_pb2 as worker__pb2
+import worker_pb2 as worker__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -71,6 +71,16 @@ class WorkerServiceStub(object):
                 request_serializer=worker__pb2.ForwardRequest.SerializeToString,
                 response_deserializer=worker__pb2.ForwardResponse.FromString,
                 _registered_method=True)
+        self.EmbedTokens = channel.unary_unary(
+                '/hivemind.worker.WorkerService/EmbedTokens',
+                request_serializer=worker__pb2.EmbedRequest.SerializeToString,
+                response_deserializer=worker__pb2.EmbedResponse.FromString,
+                _registered_method=True)
+        self.SampleTokens = channel.unary_unary(
+                '/hivemind.worker.WorkerService/SampleTokens',
+                request_serializer=worker__pb2.SampleRequest.SerializeToString,
+                response_deserializer=worker__pb2.SampleResponse.FromString,
+                _registered_method=True)
 
 
 class WorkerServiceServicer(object):
@@ -124,6 +134,19 @@ class WorkerServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EmbedTokens(self, request, context):
+        """Distributed token generation (autoregressive loop)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SampleTokens(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_WorkerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -161,6 +184,16 @@ def add_WorkerServiceServicer_to_server(servicer, server):
                     servicer.ForwardPass,
                     request_deserializer=worker__pb2.ForwardRequest.FromString,
                     response_serializer=worker__pb2.ForwardResponse.SerializeToString,
+            ),
+            'EmbedTokens': grpc.unary_unary_rpc_method_handler(
+                    servicer.EmbedTokens,
+                    request_deserializer=worker__pb2.EmbedRequest.FromString,
+                    response_serializer=worker__pb2.EmbedResponse.SerializeToString,
+            ),
+            'SampleTokens': grpc.unary_unary_rpc_method_handler(
+                    servicer.SampleTokens,
+                    request_deserializer=worker__pb2.SampleRequest.FromString,
+                    response_serializer=worker__pb2.SampleResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -354,6 +387,60 @@ class WorkerService(object):
             '/hivemind.worker.WorkerService/ForwardPass',
             worker__pb2.ForwardRequest.SerializeToString,
             worker__pb2.ForwardResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EmbedTokens(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hivemind.worker.WorkerService/EmbedTokens',
+            worker__pb2.EmbedRequest.SerializeToString,
+            worker__pb2.EmbedResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SampleTokens(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hivemind.worker.WorkerService/SampleTokens',
+            worker__pb2.SampleRequest.SerializeToString,
+            worker__pb2.SampleResponse.FromString,
             options,
             channel_credentials,
             insecure,

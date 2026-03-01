@@ -185,7 +185,16 @@ response=$(curl -s -w "\n%{http_code}" \
     -d '{
         "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         "model_type": "llm",
-        "max_peers": 4
+        "max_peers": 4,
+        "resources": {
+            "gpu_name": "NVIDIA GPU",
+            "vram_total_mb": 12288,
+            "vram_free_mb": 10240,
+            "ram_total_mb": 32768,
+            "ram_free_mb": 24576,
+            "cuda_available": true,
+            "platform": "Linux"
+        }
     }')
 status=$(echo "$response" | tail -1)
 body=$(echo "$response" | sed '$d')

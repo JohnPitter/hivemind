@@ -255,6 +255,47 @@ func (s *PeerGRPCServer) ForwardTensorStream(stream peerpb.PeerService_ForwardTe
 	}
 }
 
+// EmbedTokens forwards an embed tokens request to the local Python worker.
+func (s *PeerGRPCServer) EmbedTokens(ctx context.Context, req *workerpb.EmbedRequest) (*workerpb.EmbedResponse, error) {
+	logger.Info("embed tokens received",
+		"request_id", req.RequestId,
+		"has_text", req.Text != "",
+		"num_token_ids", len(req.TokenIds),
+	)
+
+	client := s.localWorker()
+	if client == nil {
+		return nil, fmt.Errorf("local worker unavailable")
+	}
+
+	resp, err := client.EmbedTokens(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("local embed tokens failed: %w", err)
+	}
+
+	return resp, nil
+}
+
+// SampleTokens forwards a sample tokens request to the local Python worker.
+func (s *PeerGRPCServer) SampleTokens(ctx context.Context, req *workerpb.SampleRequest) (*workerpb.SampleResponse, error) {
+	logger.Info("sample tokens received",
+		"request_id", req.RequestId,
+		"temperature", req.Temperature,
+	)
+
+	client := s.localWorker()
+	if client == nil {
+		return nil, fmt.Errorf("local worker unavailable")
+	}
+
+	resp, err := client.SampleTokens(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("local sample tokens failed: %w", err)
+	}
+
+	return resp, nil
+}
+
 // SetRoomToken updates the room token for peer authentication.
 func (s *PeerGRPCServer) SetRoomToken(token string) {
 	s.mu.Lock()

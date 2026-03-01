@@ -1,4 +1,4 @@
-import type { RoomStatus, HealthStatus } from '../types';
+import type { RoomStatus, HealthStatus, CatalogModel } from '../types';
 
 const API_BASE = '';
 
@@ -43,6 +43,51 @@ export async function stopRoom(): Promise<boolean> {
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+}
+
+export async function fetchCatalog(): Promise<CatalogModel[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/catalog`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.models ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function createRoom(modelId: string, maxPeers: number): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/room/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_id: modelId, max_peers: maxPeers }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Request failed' }));
+      return { ok: false, error: err.message ?? `Error ${res.status}` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+export async function joinRoom(inviteCode: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/room/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invite_code: inviteCode, resources: {} }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Request failed' }));
+      return { ok: false, error: err.message ?? `Error ${res.status}` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
 }
 
 export async function* chatCompletionStream(

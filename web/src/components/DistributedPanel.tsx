@@ -1,4 +1,4 @@
-import { Activity, ArrowRightLeft, Gauge, Shrink } from 'lucide-react';
+import { Activity, ArrowRightLeft, Gauge, Shrink, Zap, Timer, Hash } from 'lucide-react';
 import type { DistributedStats } from '../types';
 
 interface DistributedPanelProps {
@@ -14,6 +14,33 @@ export function DistributedPanel({ stats }: DistributedPanelProps) {
         <Activity className="w-4 h-4" />
         Distributed Inference
       </h3>
+
+      {/* Generation metrics (prominent) */}
+      {stats.generation_requests > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+          <MetricCard
+            icon={Zap}
+            label="Tokens/sec"
+            value={stats.tokens_per_second > 0 ? stats.tokens_per_second.toFixed(1) : '—'}
+            detail={`${formatCount(stats.tokens_generated)} tokens generated`}
+            highlight
+          />
+          <MetricCard
+            icon={Timer}
+            label="Token Latency"
+            value={stats.avg_token_latency_ms > 0 ? `${stats.avg_token_latency_ms.toFixed(0)}ms` : '—'}
+            detail={`embed: ${stats.embed_avg_ms.toFixed(0)}ms / sample: ${stats.sample_avg_ms.toFixed(0)}ms`}
+            highlight
+          />
+          <MetricCard
+            icon={Hash}
+            label="Generations"
+            value={formatCount(stats.generation_requests)}
+            detail={`${formatCount(stats.tokens_generated)} total tokens`}
+            highlight
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
@@ -79,16 +106,17 @@ interface MetricCardProps {
   label: string;
   value: string;
   detail: string;
+  highlight?: boolean;
 }
 
-function MetricCard({ icon: Icon, label, value, detail }: MetricCardProps) {
+function MetricCard({ icon: Icon, label, value, detail, highlight }: MetricCardProps) {
   return (
-    <div className="bg-bg-tertiary border border-border rounded-lg p-3">
+    <div className={`border rounded-lg p-3 ${highlight ? 'bg-amber/5 border-amber/20' : 'bg-bg-tertiary border-border'}`}>
       <div className="flex items-center gap-1.5 mb-2">
-        <Icon className="w-3.5 h-3.5 text-text-muted" />
+        <Icon className={`w-3.5 h-3.5 ${highlight ? 'text-amber' : 'text-text-muted'}`} />
         <span className="text-[10px] text-text-muted uppercase tracking-wider">{label}</span>
       </div>
-      <div className="text-lg font-bold text-text-primary">{value}</div>
+      <div className={`text-lg font-bold ${highlight ? 'text-amber' : 'text-text-primary'}`}>{value}</div>
       <div className="text-[10px] text-text-muted mt-0.5">{detail}</div>
     </div>
   );

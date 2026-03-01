@@ -13,26 +13,29 @@ import (
 
 const pendingTimeout = 5 * time.Minute
 
-// MockRoomService provides realistic mock data for CLI/Web development.
-type MockRoomService struct {
-	mu           sync.RWMutex
+// mockRoomEntry holds per-room state in the mock service.
+type mockRoomEntry struct {
 	room         *models.Room
 	startAt      time.Time
 	pendingTimer *time.Timer
 }
 
+// MockRoomService provides realistic mock data for CLI/Web development.
+type MockRoomService struct {
+	mu    sync.RWMutex
+	rooms map[string]*mockRoomEntry
+}
+
 // NewMockRoomService creates a mock room service.
 func NewMockRoomService() *MockRoomService {
-	return &MockRoomService{}
+	return &MockRoomService{
+		rooms: make(map[string]*mockRoomEntry),
+	}
 }
 
 func (s *MockRoomService) Create(_ context.Context, cfg models.RoomConfig) (*models.Room, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.room != nil {
-		return nil, models.ErrAlreadyInRoom
-	}
 
 	roomID := generateID(8)
 	inviteCode := generateID(6)
@@ -61,8 +64,7 @@ func (s *MockRoomService) Create(_ context.Context, cfg models.RoomConfig) (*mod
 		state = models.RoomStatePending
 	}
 
-	s.startAt = time.Now()
-	s.room = &models.Room{
+	room := &models.Room{
 		ID:          roomID,
 		InviteCode:  inviteCode,
 		ModelID:     cfg.ModelID,
@@ -85,30 +87,33 @@ func (s *MockRoomService) Create(_ context.Context, cfg models.RoomConfig) (*mod
 		},
 	}
 
-	assignLayers(s.room)
+	assignLayers(room)
+
+	entry := &mockRoomEntry{
+		room:    room,
+		startAt: time.Now(),
+	}
 
 	// Start pending timer if resources insufficient
 	if state == models.RoomStatePending {
-		s.pendingTimer = time.AfterFunc(pendingTimeout, func() {
+		entry.pendingTimer = time.AfterFunc(pendingTimeout, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			if s.room != nil && s.room.State == models.RoomStatePending {
-				s.room.State = models.RoomStateClosed
-				s.room = nil
+			if e, ok := s.rooms[roomID]; ok && e.room.State == models.RoomStatePending {
+				e.room.State = models.RoomStateClosed
+				delete(s.rooms, roomID)
 			}
 		})
 	}
 
-	return s.room, nil
+	s.rooms[roomID] = entry
+
+	return room, nil
 }
 
 func (s *MockRoomService) Join(_ context.Context, inviteCode string, resources models.ResourceSpec) (*models.Room, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.room != nil {
-		return nil, models.ErrAlreadyInRoom
-	}
 
 	// Use model from env var if set (real inference mode), otherwise default
 	modelID := os.Getenv("HIVEMIND_MODEL_ID")
@@ -116,9 +121,10 @@ func (s *MockRoomService) Join(_ context.Context, inviteCode string, resources m
 		modelID = "meta-llama/Llama-3-70B"
 	}
 
-	s.startAt = time.Now()
-	s.room = &models.Room{
-		ID:          generateID(8),
+	roomID := generateID(8)
+
+	room := &models.Room{
+		ID:          roomID,
 		InviteCode:  inviteCode,
 		ModelID:     modelID,
 		ModelType:   models.ModelTypeLLM,
@@ -172,72 +178,78 @@ func (s *MockRoomService) Join(_ context.Context, inviteCode string, resources m
 		},
 	}
 
-	// If room was pending, check if combined VRAM is now sufficient
-	if s.room.State == models.RoomStatePending {
-		var totalVRAM int64
-		for _, p := range s.room.Peers {
-			totalVRAM += p.Resources.TotalUsableVRAM()
-		}
-		modelReqs := catalog.Lookup(s.room.ModelID)
-		if modelReqs != nil && totalVRAM >= modelReqs.MinVRAMMB {
-			s.room.State = models.RoomStateActive
-			if s.pendingTimer != nil {
-				s.pendingTimer.Stop()
-				s.pendingTimer = nil
-			}
-		}
+	// Check if combined VRAM is sufficient
+	var totalVRAM int64
+	for _, p := range room.Peers {
+		totalVRAM += p.Resources.TotalUsableVRAM()
+	}
+	modelReqs := catalog.Lookup(room.ModelID)
+	if modelReqs != nil && totalVRAM < modelReqs.MinVRAMMB {
+		room.State = models.RoomStatePending
 	}
 
-	assignLayers(s.room)
+	assignLayers(room)
 
-	return s.room, nil
+	s.rooms[roomID] = &mockRoomEntry{
+		room:    room,
+		startAt: time.Now(),
+	}
+
+	return room, nil
 }
 
-func (s *MockRoomService) Leave(_ context.Context) error {
+func (s *MockRoomService) Leave(_ context.Context, roomID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.room == nil {
+	entry, ok := s.rooms[roomID]
+	if !ok {
 		return models.ErrNotInRoom
 	}
 
-	s.stopPendingTimer()
-	s.room = nil
+	if entry.pendingTimer != nil {
+		entry.pendingTimer.Stop()
+	}
+	delete(s.rooms, roomID)
 	return nil
 }
 
-func (s *MockRoomService) Stop(_ context.Context) error {
+func (s *MockRoomService) Stop(_ context.Context, roomID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.room == nil {
+	entry, ok := s.rooms[roomID]
+	if !ok {
 		return models.ErrNotInRoom
 	}
 
-	s.stopPendingTimer()
-	s.room.State = models.RoomStateClosed
-	s.room = nil
+	if entry.pendingTimer != nil {
+		entry.pendingTimer.Stop()
+	}
+	entry.room.State = models.RoomStateClosed
+	delete(s.rooms, roomID)
 	return nil
 }
 
-func (s *MockRoomService) Status(_ context.Context) (*models.RoomStatus, error) {
+func (s *MockRoomService) Status(_ context.Context, roomID string) (*models.RoomStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.room == nil {
+	entry, ok := s.rooms[roomID]
+	if !ok {
 		return nil, models.ErrNotInRoom
 	}
 
 	var totalVRAM, usedVRAM int64
-	for _, p := range s.room.Peers {
+	for _, p := range entry.room.Peers {
 		totalVRAM += p.Resources.VRAMTotal
 		usedVRAM += p.Resources.VRAMTotal - p.Resources.VRAMFree
 	}
 
-	uptime := time.Since(s.startAt).Round(time.Second).String()
+	uptime := time.Since(entry.startAt).Round(time.Second).String()
 
 	return &models.RoomStatus{
-		Room:         *s.room,
+		Room:         *entry.room,
 		TotalVRAM:    totalVRAM,
 		UsedVRAM:     usedVRAM,
 		TokensPerSec: 12.4,
@@ -248,15 +260,42 @@ func (s *MockRoomService) Status(_ context.Context) (*models.RoomStatus, error) 
 func (s *MockRoomService) CurrentRoom() *models.Room {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.room
+
+	for _, entry := range s.rooms {
+		if entry.room.State == models.RoomStateActive || entry.room.State == models.RoomStatePending {
+			return entry.room
+		}
+	}
+	return nil
 }
 
-// stopPendingTimer cancels the pending timer if active. Must be called with mu held.
-func (s *MockRoomService) stopPendingTimer() {
-	if s.pendingTimer != nil {
-		s.pendingTimer.Stop()
-		s.pendingTimer = nil
+func (s *MockRoomService) GetRoom(roomID string) *models.Room {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if entry, ok := s.rooms[roomID]; ok {
+		return entry.room
 	}
+	return nil
+}
+
+func (s *MockRoomService) ListRooms() []*models.Room {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rooms := make([]*models.Room, 0, len(s.rooms))
+	for _, entry := range s.rooms {
+		rooms = append(rooms, entry.room)
+	}
+	return rooms
+}
+
+func (s *MockRoomService) ActiveRoomID() string {
+	room := s.CurrentRoom()
+	if room != nil {
+		return room.ID
+	}
+	return ""
 }
 
 func containsInsensitive(s, substr string) bool {

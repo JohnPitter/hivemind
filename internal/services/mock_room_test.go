@@ -66,38 +66,59 @@ func TestMockRoomService_Create_SufficientResources(t *testing.T) {
 	}
 }
 
-func TestMockRoomService_CreateDuplicate(t *testing.T) {
+func TestMockRoomService_MultiRoom(t *testing.T) {
 	svc := NewMockRoomService()
 
-	_, _ = svc.Create(context.Background(), models.RoomConfig{
-		ModelID:   "test/model-7b",
+	room1, err := svc.Create(context.Background(), models.RoomConfig{
+		ModelID:   "TinyLlama/TinyLlama-1.1B",
 		ModelType: models.ModelTypeLLM,
 		MaxPeers:  3,
 	})
+	if err != nil {
+		t.Fatalf("create room 1: %v", err)
+	}
 
-	_, err := svc.Create(context.Background(), models.RoomConfig{
-		ModelID:   "test/model-7b",
+	room2, err := svc.Create(context.Background(), models.RoomConfig{
+		ModelID:   "meta-llama/Llama-3-70B",
 		ModelType: models.ModelTypeLLM,
-		MaxPeers:  3,
+		MaxPeers:  5,
 	})
+	if err != nil {
+		t.Fatalf("create room 2: %v", err)
+	}
 
-	if err != models.ErrAlreadyInRoom {
-		t.Errorf("error = %v, want ErrAlreadyInRoom", err)
+	if room1.ID == room2.ID {
+		t.Error("rooms should have different IDs")
+	}
+
+	rooms := svc.ListRooms()
+	if len(rooms) != 2 {
+		t.Errorf("ListRooms = %d, want 2", len(rooms))
+	}
+
+	got1 := svc.GetRoom(room1.ID)
+	if got1 == nil || got1.ID != room1.ID {
+		t.Error("GetRoom should return room 1")
+	}
+
+	got2 := svc.GetRoom(room2.ID)
+	if got2 == nil || got2.ID != room2.ID {
+		t.Error("GetRoom should return room 2")
 	}
 }
 
 func TestMockRoomService_Leave(t *testing.T) {
 	svc := NewMockRoomService()
 
-	_, _ = svc.Create(context.Background(), models.RoomConfig{
-		ModelID: "test/model-7b",
+	room, _ := svc.Create(context.Background(), models.RoomConfig{
+		ModelID: "TinyLlama/TinyLlama-1.1B",
 	})
 
-	if err := svc.Leave(context.Background()); err != nil {
+	if err := svc.Leave(context.Background(), room.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if svc.CurrentRoom() != nil {
+	if svc.GetRoom(room.ID) != nil {
 		t.Error("room should be nil after leave")
 	}
 }
@@ -105,7 +126,7 @@ func TestMockRoomService_Leave(t *testing.T) {
 func TestMockRoomService_LeaveWithoutRoom(t *testing.T) {
 	svc := NewMockRoomService()
 
-	err := svc.Leave(context.Background())
+	err := svc.Leave(context.Background(), "nonexistent")
 	if err != models.ErrNotInRoom {
 		t.Errorf("error = %v, want ErrNotInRoom", err)
 	}
@@ -114,13 +135,13 @@ func TestMockRoomService_LeaveWithoutRoom(t *testing.T) {
 func TestMockRoomService_Status(t *testing.T) {
 	svc := NewMockRoomService()
 
-	_, _ = svc.Create(context.Background(), models.RoomConfig{
+	room, _ := svc.Create(context.Background(), models.RoomConfig{
 		ModelID:   "meta-llama/Llama-3-70B",
 		ModelType: models.ModelTypeLLM,
 		MaxPeers:  5,
 	})
 
-	status, err := svc.Status(context.Background())
+	status, err := svc.Status(context.Background(), room.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,5 +186,23 @@ func TestLayerAssignment(t *testing.T) {
 	if len(room.Peers[1].Layers) <= len(room.Peers[0].Layers) {
 		t.Errorf("peer B (%d layers) should have more than peer A (%d layers)",
 			len(room.Peers[1].Layers), len(room.Peers[0].Layers))
+	}
+}
+
+func TestMockRoomService_ActiveRoomID(t *testing.T) {
+	svc := NewMockRoomService()
+
+	if id := svc.ActiveRoomID(); id != "" {
+		t.Errorf("ActiveRoomID = %q, want empty", id)
+	}
+
+	room, _ := svc.Create(context.Background(), models.RoomConfig{
+		ModelID:   "TinyLlama/TinyLlama-1.1B",
+		ModelType: models.ModelTypeLLM,
+		MaxPeers:  3,
+	})
+
+	if id := svc.ActiveRoomID(); id != room.ID {
+		t.Errorf("ActiveRoomID = %q, want %q", id, room.ID)
 	}
 }

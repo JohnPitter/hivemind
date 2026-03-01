@@ -128,7 +128,11 @@ func (h *RoomHandler) Join(w http.ResponseWriter, r *http.Request) {
 
 // Leave handles DELETE /room/leave.
 func (h *RoomHandler) Leave(w http.ResponseWriter, r *http.Request) {
-	if err := h.roomSvc.Leave(r.Context()); err != nil {
+	roomID := r.URL.Query().Get("room_id")
+	if roomID == "" {
+		roomID = h.roomSvc.ActiveRoomID()
+	}
+	if err := h.roomSvc.Leave(r.Context(), roomID); err != nil {
 		handleServiceError(w, err)
 		return
 	}
@@ -138,11 +142,21 @@ func (h *RoomHandler) Leave(w http.ResponseWriter, r *http.Request) {
 
 // Status handles GET /room/status.
 func (h *RoomHandler) Status(w http.ResponseWriter, r *http.Request) {
-	status, err := h.roomSvc.Status(r.Context())
+	roomID := r.URL.Query().Get("room_id")
+	if roomID == "" {
+		roomID = h.roomSvc.ActiveRoomID()
+	}
+	status, err := h.roomSvc.Status(r.Context(), roomID)
 	if err != nil {
 		handleServiceError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, status)
+}
+
+// ListRooms handles GET /api/rooms.
+func (h *RoomHandler) ListRooms(w http.ResponseWriter, _ *http.Request) {
+	rooms := h.roomSvc.ListRooms()
+	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms})
 }

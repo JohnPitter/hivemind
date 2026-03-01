@@ -1,0 +1,141 @@
+# ============================================================================
+# HiveMind Helm Chart — Default Values
+# ============================================================================
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/johnpitter/hivemind
+  tag: "1.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 8080
+  grpcWorkerPort: 50051
+  grpcPeerPort: 51051
+
+# ---------------------------------------------------------------------------
+# Ingress (optional)
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: hivemind.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ---------------------------------------------------------------------------
+# Resources — GPU-aware defaults
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: "1"
+    memory: "4Gi"
+  limits:
+    cpu: "4"
+    memory: "8Gi"
+    nvidia.com/gpu: 1
+
+# ---------------------------------------------------------------------------
+# Node placement
+# ---------------------------------------------------------------------------
+nodeSelector:
+  nvidia.com/gpu.present: "true"
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+affinity: {}
+
+# ---------------------------------------------------------------------------
+# Health probes
+# ---------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: api
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: api
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: api
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 30
+
+# ---------------------------------------------------------------------------
+# Environment variables (injected via ConfigMap)
+# ---------------------------------------------------------------------------
+env:
+  HIVEMIND_MOCK: "false"
+  HIVEMIND_SIGNALING_URL: "http://hivemind-signaling:7777"
+  HIVEMIND_WORKER_POOL_SIZE: "4"
+  HIVEMIND_WORKER_MAX_CONCURRENT: "8"
+
+# Extra env vars injected directly into the container spec (for secrets, etc.)
+extraEnv: []
+
+# ---------------------------------------------------------------------------
+# Config file (mounted at /etc/hivemind/config.yaml)
+# ---------------------------------------------------------------------------
+config:
+  api:
+    host: "0.0.0.0"
+    port: 8080
+    rate_limit: 500
+    max_body_bytes: 52428800
+    read_timeout_s: 30
+    write_timeout_s: 120
+    idle_timeout_s: 120
+    shutdown_timeout_s: 30
+  worker:
+    grpc_port: 50051
+    health_interval_s: 5
+    max_restarts: 5
+  log:
+    level: "info"
+    format: "json"
+    add_source: false
+  metrics:
+    enabled: true
+    prometheus_enabled: true
+    prometheus_path: "/metrics"

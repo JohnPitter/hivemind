@@ -246,16 +246,20 @@ class WorkerServicer(worker_pb2_grpc.WorkerServiceServicer):
             "ForwardPass request",
             request_id=request.request_id,
             compressed=request.compressed,
+            use_cache=request.use_cache,
+            cache_seq_len=request.cache_seq_len,
         )
 
         start = time.monotonic()
 
         try:
-            # Decompress if needed, run through local layers, compress result
-            output_data = self.llm_engine.forward_pass(
+            output_data, new_seq_len = self.llm_engine.forward_pass(
                 tensor_data=request.tensor_data,
                 meta=request.meta,
                 compressed=request.compressed,
+                use_cache=request.use_cache,
+                request_id=request.request_id,
+                cache_seq_len=request.cache_seq_len,
             )
 
             duration = (time.monotonic() - start) * 1000
@@ -266,11 +270,84 @@ class WorkerServicer(worker_pb2_grpc.WorkerServiceServicer):
                 meta=request.meta,
                 compressed=request.compressed,
                 duration_ms=duration,
+                cache_seq_len=new_seq_len,
             )
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return worker_pb2.ForwardResponse()
+
+    def EmbedTokens(self, request, context):
+        """Embed text or token IDs into hidden states for distributed generation."""
+        logger.info(
+            "EmbedTokens request",
+            request_id=request.request_id,
+            has_text=bool(request.text),
+            num_token_ids=len(request.token_ids),
+        )
+
+        if self.state != worker_pb2.StatusResponse.READY:
+            context.set_code(grpc.StatusCode.UNAVAILABLE)
+            context.set_details("model not loaded")
+            return worker_pb2.EmbedResponse()
+
+        try:
+            text = request.text if request.text else None
+            token_ids = list(request.token_ids) if request.token_ids else None
+
+            hidden_states, ids_list, vocab_size = self.llm_engine.embed_tokens(
+                text=text,
+                token_ids=token_ids,
+            )
+
+            return worker_pb2.EmbedResponse(
+                request_id=request.request_id,
+                hidden_states=hidden_states,
+                token_ids=ids_list,
+                vocab_size=vocab_size,
+            )
+        except Exception as e:
+            logger.error("embed_tokens failed", error=str(e))
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return worker_pb2.EmbedResponse()
+
+    def SampleTokens(self, request, context):
+        """Sample the next token from logits/hidden states."""
+        logger.info(
+            "SampleTokens request",
+            request_id=request.request_id,
+            temperature=request.temperature,
+        )
+
+        if self.state != worker_pb2.StatusResponse.READY:
+            context.set_code(grpc.StatusCode.UNAVAILABLE)
+            context.set_details("model not loaded")
+            return worker_pb2.SampleResponse()
+
+        try:
+            eos_ids = list(request.eos_token_ids) if request.eos_token_ids else None
+
+            token_id, token_text, is_eos, token_prob = self.llm_engine.sample_tokens(
+                logits_data=request.logits,
+                temperature=request.temperature if request.temperature > 0 else 0.7,
+                top_p=request.top_p if request.top_p > 0 else 0.9,
+                top_k=request.top_k if request.top_k > 0 else 50,
+                eos_token_ids=eos_ids,
+            )
+
+            return worker_pb2.SampleResponse(
+                request_id=request.request_id,
+                token_id=token_id,
+                token_text=token_text,
+                is_eos=is_eos,
+                token_prob=token_prob,
+            )
+        except Exception as e:
+            logger.error("sample_tokens failed", error=str(e))
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return worker_pb2.SampleResponse()
 
 
 def serve(port: int = 50051) -> None:

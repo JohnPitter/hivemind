@@ -43,7 +43,7 @@ func leaveCmd(roomSvc services.RoomService) *cobra.Command {
 				}
 			}
 
-			if err := roomSvc.Leave(context.Background()); err != nil {
+			if err := roomSvc.Leave(context.Background(), room.ID); err != nil {
 				if err == models.ErrNotInRoom {
 					fmt.Println(DimStyle.Render("  Not in any room."))
 					return nil
@@ -101,7 +101,7 @@ func stopCmd(roomSvc services.RoomService) *cobra.Command {
 				}
 			}
 
-			if err := roomSvc.Stop(context.Background()); err != nil {
+			if err := roomSvc.Stop(context.Background(), room.ID); err != nil {
 				return fmt.Errorf("failed to stop room: %w", err)
 			}
 
