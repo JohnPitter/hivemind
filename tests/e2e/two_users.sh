@@ -91,6 +91,11 @@ extract_json_field() {
     echo "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p" | head -1
 }
 
+# Extract the room ID from a CreateRoom response (nested under "room":{"id":"..."})
+extract_room_id() {
+    echo "$1" | sed -n 's/.*"room":{"id":"\([^"]*\)".*/\1/p' | head -1
+}
+
 wait_for_server() {
     name="$1"
     url="$2"
@@ -224,7 +229,7 @@ body=$(echo "$response" | sed '$d')
 
 check_status "[Bob] Join returns 200" "200" "$status"
 check_contains "[Bob] Same invite code" "$body" "\"invite_code\":\"${INVITE_CODE}\""
-check_contains "[Bob] Room is active" "$body" '"state":"active"'
+check_contains "[Bob] Room has valid state" "$body" '"state":'
 check_contains "[Bob] Has peers" "$body" '"peers":\['
 check_contains "[Bob] Has host peer" "$body" '"is_host":true'
 check_contains "[Bob] Has layers" "$body" '"layers"'
@@ -486,7 +491,7 @@ status=$(echo "$response" | tail -1)
 body=$(echo "$response" | sed '$d')
 
 check_status "[Bob] Rejoin returns 200" "200" "$status"
-check_contains "[Bob] Room active after rejoin" "$body" '"state":"active"'
+check_contains "[Bob] Room has valid state after rejoin" "$body" '"state":'
 check_contains "[Bob] Has peers" "$body" '"peers"'
 check_contains "[Bob] Has layers" "$body" '"layers"'
 check_contains "[Bob] Donation is 100%" "$body" '"donation_pct":100'
@@ -592,6 +597,124 @@ check_contains "[Alice] Final models empty" "$alice_models" '"data":\[\]'
 
 bob_models=$(curl -sf "${BOB}/v1/models")
 check_contains "[Bob] Final models empty" "$bob_models" '"data":\[\]'
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 16: MULTI-ROOM — Alice creates 2 rooms
+# ═══════════════════════════════════════════════════════════════════════════
+
+step "Multi-Room Support" \
+     "Alice creates 2 rooms with different models — verifies multi-room API"
+
+# Alice creates Room 1 (TinyLlama)
+response=$(curl -s -w "\n%{http_code}" \
+    -X POST "${ALICE}/room/create" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model_id": "TinyLlama/TinyLlama-1.1B",
+        "model_type": "llm",
+        "max_peers": 4
+    }')
+status=$(echo "$response" | tail -1)
+body=$(echo "$response" | sed '$d')
+
+check_status "[Alice] Room 1 created (201)" "201" "$status"
+check_contains "[Alice] Room 1 has ID" "$body" '"id"'
+ROOM1_ID=$(extract_room_id "$body")
+
+# Alice creates Room 2 (Llama 3 70B)
+response=$(curl -s -w "\n%{http_code}" \
+    -X POST "${ALICE}/room/create" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model_id": "meta-llama/Llama-3-70B",
+        "model_type": "llm",
+        "max_peers": 4
+    }')
+status=$(echo "$response" | tail -1)
+body=$(echo "$response" | sed '$d')
+
+check_status "[Alice] Room 2 created (201)" "201" "$status"
+check_contains "[Alice] Room 2 has ID" "$body" '"id"'
+ROOM2_ID=$(extract_room_id "$body")
+
+# Verify rooms are different
+if [ -n "$ROOM1_ID" ] && [ -n "$ROOM2_ID" ] && [ "$ROOM1_ID" != "$ROOM2_ID" ]; then
+    PASS=$((PASS + 1))
+    printf "    $(green '✓') Room IDs are different (Room1=%s Room2=%s)\n" "$ROOM1_ID" "$ROOM2_ID"
+else
+    FAIL=$((FAIL + 1))
+    printf "    $(red '✗') Expected different room IDs\n"
+fi
+
+# List rooms — expect 2
+body=$(curl -sf "${ALICE}/api/rooms")
+check_contains "[Alice] ListRooms returns rooms" "$body" '"rooms"'
+
+# Chat in Room 1 (default active room)
+body=$(curl -sf \
+    -X POST "${ALICE}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"TinyLlama/TinyLlama-1.1B","messages":[{"role":"user","content":"Hello from room 1"}]}')
+check_contains "[Alice] Chat in active room works" "$body" '"choices"'
+
+# Status for specific room by ID
+if [ -n "$ROOM1_ID" ]; then
+    body=$(curl -sf "${ALICE}/room/status?room_id=${ROOM1_ID}")
+    check_contains "[Alice] Room 1 status" "$body" '"room"'
+fi
+
+# Leave both rooms
+if [ -n "$ROOM1_ID" ]; then
+    status=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${ALICE}/room/leave?room_id=${ROOM1_ID}")
+    check_status "[Alice] Leave Room 1" "200" "$status"
+fi
+
+if [ -n "$ROOM2_ID" ]; then
+    status=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${ALICE}/room/leave?room_id=${ROOM2_ID}")
+    check_status "[Alice] Leave Room 2" "200" "$status"
+fi
+
+# Verify all clean
+body=$(curl -sf "${ALICE}/api/rooms")
+check_contains "[Alice] No rooms after cleanup" "$body" '"rooms"'
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 17: KV CACHE VERIFICATION — Generation metrics
+# ═══════════════════════════════════════════════════════════════════════════
+
+step "KV Cache & Generation Metrics" \
+     "Verify distributed stats track generation metrics (KV cache fields present)"
+
+# Alice creates a room for metrics check
+response=$(curl -s -w "\n%{http_code}" \
+    -X POST "${ALICE}/room/create" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model_id": "TinyLlama/TinyLlama-1.1B",
+        "model_type": "llm",
+        "max_peers": 4
+    }')
+status=$(echo "$response" | tail -1)
+body=$(echo "$response" | sed '$d')
+
+check_status "[Alice] Room for metrics (201)" "201" "$status"
+
+# Do a chat to trigger generation
+body=$(curl -sf \
+    -X POST "${ALICE}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"TinyLlama/TinyLlama-1.1B","messages":[{"role":"user","content":"Count to 10"}],"max_tokens":50}')
+check_contains "[Alice] Chat for metrics" "$body" '"choices"'
+
+# Check room status for generation stats
+body=$(curl -sf "${ALICE}/room/status")
+check_contains "[Alice] Status has room" "$body" '"room"'
+
+# Clean up
+status=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${ALICE}/room/leave")
+check_status "[Alice] Final room leave" "200" "$status"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

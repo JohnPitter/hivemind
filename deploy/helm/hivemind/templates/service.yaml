@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hivemind.fullname" . }}
+  labels:
+    {{- include "hivemind.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: api
+      port: {{ .Values.service.port }}
+      targetPort: api
+      protocol: TCP
+    - name: grpc-worker
+      port: {{ .Values.service.grpcWorkerPort }}
+      targetPort: grpc-worker
+      protocol: TCP
+    - name: grpc-peer
+      port: {{ .Values.service.grpcPeerPort }}
+      targetPort: grpc-peer
+      protocol: TCP
+  selector:
+    {{- include "hivemind.selectorLabels" . | nindent 4 }}

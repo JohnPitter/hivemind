@@ -46,6 +46,12 @@ export interface DistributedStats {
   compression_ratio: number;
   forward_pass_avg_ms: number;
   is_distributed: boolean;
+  tokens_generated: number;
+  tokens_per_second: number;
+  avg_token_latency_ms: number;
+  embed_avg_ms: number;
+  sample_avg_ms: number;
+  generation_requests: number;
 }
 
 export interface RoomStatus {
@@ -67,4 +73,15 @@ export interface HealthStatus {
   worker_healthy: boolean;
   peers_connected: number;
   model_loaded: boolean;
+}
+
+export interface CatalogModel {
+  id: string;
+  name: string;
+  type: string;
+  parameter_size: string;
+  total_layers: number;
+  min_vram_mb: number;
+  recommended_vram_mb: number;
+  min_peer_vram_mb: number;
 }

@@ -18,6 +18,10 @@ service PeerService {
   // Tensor forwarding for distributed inference
   rpc ForwardTensor(hivemind.worker.ForwardRequest) returns (hivemind.worker.ForwardResponse);
   rpc ForwardTensorStream(stream hivemind.worker.ForwardRequest) returns (stream hivemind.worker.ForwardResponse);
+
+  // Distributed token generation (embed/sample forwarding)
+  rpc EmbedTokens(hivemind.worker.EmbedRequest) returns (hivemind.worker.EmbedResponse);
+  rpc SampleTokens(hivemind.worker.SampleRequest) returns (hivemind.worker.SampleResponse);
 }
 
 // --- Handshake ---

@@ -57,12 +57,31 @@ func main() {
 		sigClient := infra.NewSignalingClient(cfg.Signaling.URL)
 		peerRegistry = infra.NewPeerRegistry(peerID, cfg.Mesh.GRPCPort)
 
+		// Initialize NAT traversal if enabled
+		var natTraversal *infra.NATTraversal
+		if cfg.NAT.Enabled {
+			var turnCfg []infra.TURNConfig
+			if cfg.NAT.TURNServer != "" {
+				turnCfg = append(turnCfg, infra.TURNConfig{
+					Server: cfg.NAT.TURNServer,
+					User:   cfg.NAT.TURNUser,
+					Pass:   cfg.NAT.TURNPass,
+				})
+			}
+			natTraversal = infra.NewNATTraversal(cfg.NAT.STUNServers, turnCfg...)
+			logger.Info("NAT traversal enabled",
+				"component", "nat",
+				"stun_servers", fmt.Sprintf("%v", cfg.NAT.STUNServers),
+				"turn_configured", cfg.NAT.TURNServer != "",
+			)
+		}
+
 		roomSvc = services.NewRealRoomService(services.RealRoomConfig{
 			LocalPeerID:   peerID,
 			Endpoint:      endpoint,
 			WireGuardPort: cfg.Mesh.WireGuardPort,
 			GRPCPort:      cfg.Mesh.GRPCPort,
-		}, sigClient, wgManager, peerRegistry)
+		}, sigClient, wgManager, peerRegistry, natTraversal)
 	}
 
 	var infSvc services.InferenceService
@@ -88,11 +107,19 @@ func main() {
 		if peerRegistry != nil {
 			peerID := infra.GetOrCreatePeerID()
 			realInf.SetLocalPeerID(peerID)
+
+			// Wire distributed inference for multi-peer generation
+			distInf := services.NewDistributedInferenceService(
+				wm.Client,
+				peerRegistry,
+				roomSvc,
+				peerID,
+			)
+			realInf.SetDistributedInference(distInf)
+			logger.Info("distributed inference wired", "peer_id", peerID)
 		}
 		infSvc = realInf
 	}
-
-	_ = peerRegistry // used by future distributed inference wiring
 
 	rootCmd := &cobra.Command{
 		Use:   "hivemind",

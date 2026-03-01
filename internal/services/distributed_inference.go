@@ -31,10 +31,28 @@ type DistributedInferenceService struct {
 	totalForwardMs   atomic.Int64
 	forwardPassCount atomic.Int64
 
+	// Generation loop metrics
+	tokensGenerated    atomic.Int64
+	generationRequests atomic.Int64
+	embedTotalMs       atomic.Int64
+	embedCount         atomic.Int64
+	sampleTotalMs      atomic.Int64
+	sampleCount        atomic.Int64
+
+	// Token latency tracking
+	tokenLatencyMu   sync.Mutex
+	tokenLatencies   []int64
+	tokenLatencySum  int64
+
 	// Compression ratio tracking
 	compMu              sync.Mutex
 	compressedTotal     int64
 	uncompressedTotal   int64
+}
+
+// HasRemotePeers returns true if there are remote peers connected in the registry.
+func (d *DistributedInferenceService) HasRemotePeers() bool {
+	return d.peerRegistry != nil && d.peerRegistry.PeerCount() > 0
 }
 
 // NewDistributedInferenceService creates a distributed inference coordinator.
@@ -100,24 +118,30 @@ func (d *DistributedInferenceService) ComputeForwardOrder() []LayerAssignment {
 // ExecuteDistributedForwardPass chains the forward pass through all peers in order.
 // Each peer processes its assigned layers and passes the intermediate tensor to the next.
 // Remote transfers use zstd compression and SHA-256 checksums for integrity.
+// When useCache is true, peers reuse KV cache from previous steps (avoids O(n²) recomputation).
 func (d *DistributedInferenceService) ExecuteDistributedForwardPass(
 	ctx context.Context,
 	tensorData []byte,
 	requestID string,
-) ([]byte, float64, error) {
+	useCache bool,
+	cacheSeqLen int32,
+) ([]byte, float64, int32, error) {
 	order := d.ComputeForwardOrder()
 	if len(order) == 0 {
-		return nil, 0, fmt.Errorf("no layer assignments found")
+		return nil, 0, 0, fmt.Errorf("no layer assignments found")
 	}
 
 	logger.Info("starting distributed forward pass",
 		"request_id", requestID,
 		"peer_count", len(order),
 		"input_size", len(tensorData),
+		"use_cache", useCache,
+		"cache_seq_len", cacheSeqLen,
 	)
 
 	totalDuration := float64(0)
 	currentData := tensorData
+	currentSeqLen := cacheSeqLen
 
 	for i, assignment := range order {
 		start := time.Now()
@@ -148,8 +172,10 @@ func (d *DistributedInferenceService) ExecuteDistributedForwardPass(
 				FromLayer: int32(assignment.StartLayer),
 				ToLayer:   int32(assignment.EndLayer),
 			},
-			Compressed: compressed,
-			Checksum:   checksum[:],
+			Compressed:  compressed,
+			Checksum:    checksum[:],
+			UseCache:    useCache,
+			CacheSeqLen: currentSeqLen,
 		}
 
 		var resp *workerpb.ForwardResponse
@@ -159,7 +185,7 @@ func (d *DistributedInferenceService) ExecuteDistributedForwardPass(
 			// Process locally via worker gRPC
 			client := d.localWorker()
 			if client == nil {
-				return nil, 0, models.ErrWorkerUnavail
+				return nil, 0, 0, models.ErrWorkerUnavail
 			}
 
 			resp, err = client.ForwardPass(ctx, req)
@@ -173,7 +199,7 @@ func (d *DistributedInferenceService) ExecuteDistributedForwardPass(
 		}
 
 		if err != nil {
-			return nil, 0, fmt.Errorf("forward pass failed at peer %s (layers %d-%d): %w",
+			return nil, 0, 0, fmt.Errorf("forward pass failed at peer %s (layers %d-%d): %w",
 				assignment.PeerID, assignment.StartLayer, assignment.EndLayer, err)
 		}
 
@@ -182,12 +208,17 @@ func (d *DistributedInferenceService) ExecuteDistributedForwardPass(
 		d.totalForwardMs.Add(int64(duration))
 		d.forwardPassCount.Add(1)
 
+		// Update sequence length from response
+		if resp.CacheSeqLen > 0 {
+			currentSeqLen = resp.CacheSeqLen
+		}
+
 		// Decompress response if needed
 		outputData := resp.TensorData
 		if resp.Compressed && d.compressor != nil {
 			outputData, err = d.compressor.Decompress(resp.TensorData)
 			if err != nil {
-				return nil, 0, fmt.Errorf("failed to decompress response from peer %s: %w",
+				return nil, 0, 0, fmt.Errorf("failed to decompress response from peer %s: %w",
 					assignment.PeerID, err)
 			}
 		}
@@ -208,9 +239,10 @@ func (d *DistributedInferenceService) ExecuteDistributedForwardPass(
 		"request_id", requestID,
 		"total_duration_ms", totalDuration,
 		"output_size", len(currentData),
+		"cache_seq_len", currentSeqLen,
 	)
 
-	return currentData, totalDuration, nil
+	return currentData, totalDuration, currentSeqLen, nil
 }
 
 // GetStats returns current distributed inference statistics.
@@ -255,15 +287,63 @@ func (d *DistributedInferenceService) GetStats() *models.DistributedStats {
 	}
 	d.compMu.Unlock()
 
+	// Generation metrics
+	tokensGen := d.tokensGenerated.Load()
+	genRequests := d.generationRequests.Load()
+
+	// Tokens per second
+	tokensPerSec := float64(0)
+	avgTokenLatency := float64(0)
+	d.tokenLatencyMu.Lock()
+	if len(d.tokenLatencies) > 0 && d.tokenLatencySum > 0 {
+		avgTokenLatency = float64(d.tokenLatencySum) / float64(len(d.tokenLatencies))
+		if avgTokenLatency > 0 {
+			tokensPerSec = 1000.0 / avgTokenLatency
+		}
+	}
+	d.tokenLatencyMu.Unlock()
+
+	// Embed and sample averages
+	embedAvg := float64(0)
+	if ec := d.embedCount.Load(); ec > 0 {
+		embedAvg = float64(d.embedTotalMs.Load()) / float64(ec)
+	}
+	sampleAvg := float64(0)
+	if sc := d.sampleCount.Load(); sc > 0 {
+		sampleAvg = float64(d.sampleTotalMs.Load()) / float64(sc)
+	}
+
 	return &models.DistributedStats{
-		PeerCount:        peerCount,
-		TotalLayers:      room.TotalLayers,
-		AvgLatencyMs:     avgLatency,
-		TensorTransfers:  d.tensorTransfers.Load(),
-		BytesTransferred: d.bytesTransferred.Load(),
-		CompressionRatio: compressionRatio,
-		ForwardPassAvgMs: forwardPassAvg,
-		IsDistributed:    isDistributed,
+		PeerCount:          peerCount,
+		TotalLayers:        room.TotalLayers,
+		AvgLatencyMs:       avgLatency,
+		TensorTransfers:    d.tensorTransfers.Load(),
+		BytesTransferred:   d.bytesTransferred.Load(),
+		CompressionRatio:   compressionRatio,
+		ForwardPassAvgMs:   forwardPassAvg,
+		IsDistributed:      isDistributed,
+		TokensGenerated:    tokensGen,
+		TokensPerSecond:    tokensPerSec,
+		AvgTokenLatencyMs:  avgTokenLatency,
+		EmbedAvgMs:         embedAvg,
+		SampleAvgMs:        sampleAvg,
+		GenerationRequests: genRequests,
+	}
+}
+
+// recordTokenLatency tracks individual token generation latencies (ring buffer of last 1000).
+func (d *DistributedInferenceService) recordTokenLatency(ms int64) {
+	d.tokenLatencyMu.Lock()
+	defer d.tokenLatencyMu.Unlock()
+
+	const maxLatencies = 1000
+	d.tokenLatencies = append(d.tokenLatencies, ms)
+	d.tokenLatencySum += ms
+
+	if len(d.tokenLatencies) > maxLatencies {
+		// Remove oldest entry
+		d.tokenLatencySum -= d.tokenLatencies[0]
+		d.tokenLatencies = d.tokenLatencies[1:]
 	}
 }
 

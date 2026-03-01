@@ -37,7 +37,11 @@ func (h *WebHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // HandleRoomStatusJSON serves room status as JSON (used by both standalone and chi-based server).
 func (h *WebHandler) HandleRoomStatusJSON(w http.ResponseWriter, r *http.Request) {
-	status, err := h.roomSvc.Status(r.Context())
+	roomID := r.URL.Query().Get("room_id")
+	if roomID == "" {
+		roomID = h.roomSvc.ActiveRoomID()
+	}
+	status, err := h.roomSvc.Status(r.Context(), roomID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return

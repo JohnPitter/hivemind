@@ -17,7 +17,7 @@ func statusCmd(roomSvc services.RoomService) *cobra.Command {
 		Short: "Show room status and peer information",
 		Long:  "Display real-time information about the current room, connected peers, layer assignments, and resource usage.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			status, err := roomSvc.Status(context.Background())
+			status, err := roomSvc.Status(context.Background(), roomSvc.ActiveRoomID())
 			if err != nil {
 				if err == models.ErrNotInRoom {
 					fmt.Println()

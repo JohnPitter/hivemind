@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -32,6 +33,9 @@ type Config struct {
 
 	// Resilience settings
 	Resilience ResilienceConfig `mapstructure:"resilience"`
+
+	// NAT traversal
+	NAT NATConfig `mapstructure:"nat"`
 
 	// Logging
 	Log LogConfig `mapstructure:"log"`
@@ -86,6 +90,15 @@ type ResilienceConfig struct {
 	CircuitMaxFails int `mapstructure:"circuit_max_fails"`
 }
 
+// NATConfig holds NAT traversal settings.
+type NATConfig struct {
+	Enabled     bool     `mapstructure:"enabled"`
+	STUNServers []string `mapstructure:"stun_servers"`
+	TURNServer  string   `mapstructure:"turn_server"`
+	TURNUser    string   `mapstructure:"turn_user"`
+	TURNPass    string   `mapstructure:"turn_pass"`
+}
+
 // LogConfig holds logging settings.
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
@@ -115,6 +128,7 @@ func Load(cfgFile string) (*Config, error) {
 	setDefaults()
 
 	viper.SetEnvPrefix("HIVEMIND")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
 	// Config file is optional — defaults are fine
@@ -169,6 +183,13 @@ func setDefaults() {
 	viper.SetDefault("resilience.max_retries", 3)
 	viper.SetDefault("resilience.health_interval_s", 5)
 	viper.SetDefault("resilience.circuit_max_fails", 3)
+
+	// NAT
+	viper.SetDefault("nat.enabled", true)
+	viper.SetDefault("nat.stun_servers", []string{"stun.l.google.com:19302"})
+	viper.SetDefault("nat.turn_server", "")
+	viper.SetDefault("nat.turn_user", "")
+	viper.SetDefault("nat.turn_pass", "")
 
 	// Log
 	viper.SetDefault("log.level", "info")

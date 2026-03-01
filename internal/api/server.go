@@ -94,9 +94,13 @@ func (s *Server) setupRoutes() {
 		r.Get("/status", roomHandler.Status)
 	})
 
+	// Prometheus metrics
+	promHandler := handlers.NewPrometheusHandler(healthHandler.GetMetrics())
+
 	// Public routes
 	s.router.Get("/health", healthHandler.Health)
 	s.router.Get("/metrics", healthHandler.Metrics)
+	s.router.Get("/metrics/prometheus", promHandler.Metrics)
 
 	// Web dashboard (SPA) — must be last
 	if s.webFS != nil {
@@ -105,6 +109,10 @@ func (s *Server) setupRoutes() {
 			r.Get("/room/status", webHandler.HandleRoomStatusJSON)
 			r.Get("/health", webHandler.HandleHealthJSON)
 			r.Get("/models", webHandler.HandleModelsJSON)
+			r.Post("/room/create", roomHandler.Create)
+			r.Post("/room/join", roomHandler.Join)
+			r.Get("/rooms", roomHandler.ListRooms)
+			r.Get("/catalog", catalogHandler.ListCatalog)
 		})
 
 		// Serve static files and SPA fallback

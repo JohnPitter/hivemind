@@ -25,45 +25,53 @@ type RealRoomConfig struct {
 	GRPCPort      int
 }
 
-// RealRoomService orchestrates room lifecycle with real P2P networking:
-// Signaling → WireGuard → PeerRegistry → PeerGRPCServer.
-type RealRoomService struct {
-	mu           sync.RWMutex
+// roomContext holds per-room networking state.
+type roomContext struct {
 	room         *models.Room
 	startAt      time.Time
 	pendingTimer *time.Timer
+	peerRegistry *infra.PeerRegistry
+	peerServer   *infra.PeerGRPCServer
+	resilience   *ResilienceService
+}
+
+// RealRoomService orchestrates room lifecycle with real P2P networking:
+// Signaling → WireGuard → PeerRegistry → PeerGRPCServer.
+// Supports multiple concurrent rooms.
+type RealRoomService struct {
+	mu    sync.RWMutex
+	rooms map[string]*roomContext
 
 	sigClient    *infra.SignalingClient
 	wgManager    *infra.WireGuardManager
 	peerRegistry *infra.PeerRegistry
-	peerServer   *infra.PeerGRPCServer
-	resilience   *ResilienceService
+	natTraversal *infra.NATTraversal
 
 	cfg RealRoomConfig
 }
 
 // NewRealRoomService creates a real room service wired to actual infrastructure.
+// natTraversal is optional — pass nil to disable STUN discovery.
 func NewRealRoomService(
 	cfg RealRoomConfig,
 	sigClient *infra.SignalingClient,
 	wgManager *infra.WireGuardManager,
 	peerRegistry *infra.PeerRegistry,
+	natTraversal *infra.NATTraversal,
 ) *RealRoomService {
 	return &RealRoomService{
+		rooms:        make(map[string]*roomContext),
 		cfg:          cfg,
 		sigClient:    sigClient,
 		wgManager:    wgManager,
 		peerRegistry: peerRegistry,
+		natTraversal: natTraversal,
 	}
 }
 
 func (s *RealRoomService) Create(ctx context.Context, cfg models.RoomConfig) (*models.Room, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.room != nil {
-		return nil, models.ErrAlreadyInRoom
-	}
 
 	// 1. Initialize WireGuard (host gets mesh IP .1)
 	meshIP := infra.AllocateMeshIP(0)
@@ -75,7 +83,46 @@ func (s *RealRoomService) Create(ctx context.Context, cfg models.RoomConfig) (*m
 	roomID := generateID(8)
 	inviteCode := generateID(6)
 
-	// 3. Register room on signaling server
+	// 3. Auto-detect external endpoint via STUN if not configured
+	if s.natTraversal != nil && s.cfg.Endpoint == "" {
+		endpoint, natType, err := s.natTraversal.DiscoverExternalEndpoint(ctx, s.cfg.WireGuardPort)
+		if err == nil {
+			s.cfg.Endpoint = endpoint
+			logger.Info("STUN discovered endpoint",
+				"component", "nat",
+				"endpoint", endpoint,
+				"nat_type", string(natType),
+			)
+		} else {
+			logger.Warn("STUN discovery failed, using local IP",
+				"component", "nat",
+				"error", err,
+			)
+		}
+		if natType == infra.NATTypeSymmetric {
+			if s.natTraversal.HasTURN() {
+				relayAddr, relayErr := s.natTraversal.AllocateRelay(ctx)
+				if relayErr == nil {
+					s.cfg.Endpoint = relayAddr
+					logger.Info("TURN relay allocated for symmetric NAT",
+						"component", "nat",
+						"relay_addr", relayAddr,
+					)
+				} else {
+					logger.Warn("TURN relay allocation failed",
+						"component", "nat",
+						"error", relayErr,
+					)
+				}
+			} else {
+				logger.Warn("symmetric NAT detected — no TURN configured, P2P may fail",
+					"component", "nat",
+				)
+			}
+		}
+	}
+
+	// 4. Register room on signaling server
 	sigReq := infra.SignalingCreateRequest{
 		RoomID:     roomID,
 		InviteCode: inviteCode,
@@ -89,37 +136,36 @@ func (s *RealRoomService) Create(ctx context.Context, cfg models.RoomConfig) (*m
 		return nil, fmt.Errorf("signaling create: %w", err)
 	}
 
-	// 4. Create PeerGRPCServer with callbacks
+	// 5. Create PeerGRPCServer with callbacks
 	peerSrv, err := infra.NewPeerGRPCServer(infra.PeerGRPCServerConfig{
 		LocalPeerID: s.cfg.LocalPeerID,
 		LocalWorker: func() workerpb.WorkerServiceClient { return nil }, // set later by inference service
 		RoomToken:   inviteCode,
 		OnHandshake: func(peerID string, resources *workerpb.ResourceUsage) {
-			s.addPeerToRoom(peerID, resources)
+			s.addPeerToRoom(roomID, peerID, resources)
 		},
 		GetRoomState: func() *peerpb.RoomState {
-			return s.getRoomStateProto()
+			return s.getRoomStateProto(roomID)
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("peer server: %w", err)
 	}
-	s.peerServer = peerSrv
 
-	// 5. Start gRPC server for peer connections
-	if err := s.peerServer.Start(s.cfg.GRPCPort); err != nil {
+	// 6. Start gRPC server for peer connections
+	if err := peerSrv.Start(s.cfg.GRPCPort); err != nil {
 		return nil, fmt.Errorf("peer server start: %w", err)
 	}
 
-	// 6. Write WireGuard config
+	// 7. Write WireGuard config
 	if _, err := s.wgManager.WriteConfig(); err != nil {
 		logger.Warn("failed to write wireguard config", "error", err)
 	}
 
-	// 7. Bring up WireGuard mesh (Linux only)
+	// 8. Bring up WireGuard mesh (Linux only)
 	s.bringUpMesh()
 
-	// 8. Determine initial state
+	// 9. Determine initial state
 	hostResources := models.ResourceSpec{
 		GPUName:   "Unknown GPU",
 		VRAMTotal: 0,
@@ -139,8 +185,7 @@ func (s *RealRoomService) Create(ctx context.Context, cfg models.RoomConfig) (*m
 		state = models.RoomStatePending
 	}
 
-	s.startAt = time.Now()
-	s.room = &models.Room{
+	room := &models.Room{
 		ID:          roomID,
 		InviteCode:  inviteCode,
 		ModelID:     cfg.ModelID,
@@ -163,23 +208,32 @@ func (s *RealRoomService) Create(ctx context.Context, cfg models.RoomConfig) (*m
 		},
 	}
 
-	assignLayers(s.room)
+	assignLayers(room)
+
+	rc := &roomContext{
+		room:         room,
+		startAt:      time.Now(),
+		peerRegistry: s.peerRegistry,
+		peerServer:   peerSrv,
+	}
 
 	// Start pending timer if resources insufficient
 	if state == models.RoomStatePending {
-		s.pendingTimer = time.AfterFunc(realPendingTimeout, func() {
+		rc.pendingTimer = time.AfterFunc(realPendingTimeout, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			if s.room != nil && s.room.State == models.RoomStatePending {
-				s.room.State = models.RoomStateClosed
-				s.cleanup(context.Background())
+			if entry, ok := s.rooms[roomID]; ok && entry.room.State == models.RoomStatePending {
+				entry.room.State = models.RoomStateClosed
+				s.cleanupRoom(roomID)
 			}
 		})
 	}
 
+	s.rooms[roomID] = rc
+
 	// Start resilience service for active rooms
 	if state == models.RoomStateActive {
-		s.startResilience()
+		s.startResilienceForRoom(rc)
 	}
 
 	logger.Info("room created",
@@ -189,16 +243,12 @@ func (s *RealRoomService) Create(ctx context.Context, cfg models.RoomConfig) (*m
 		"state", state,
 	)
 
-	return s.room, nil
+	return room, nil
 }
 
 func (s *RealRoomService) Join(ctx context.Context, inviteCode string, resources models.ResourceSpec) (*models.Room, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.room != nil {
-		return nil, models.ErrAlreadyInRoom
-	}
 
 	// 1. Initialize WireGuard first to get public key
 	// Use a temporary mesh IP — will be overwritten by signaling response
@@ -206,7 +256,46 @@ func (s *RealRoomService) Join(ctx context.Context, inviteCode string, resources
 		return nil, fmt.Errorf("wireguard init: %w", err)
 	}
 
-	// 2. Join via signaling server (with correct public key)
+	// 2. Auto-detect external endpoint via STUN if not configured
+	if s.natTraversal != nil && s.cfg.Endpoint == "" {
+		endpoint, natType, err := s.natTraversal.DiscoverExternalEndpoint(ctx, s.cfg.WireGuardPort)
+		if err == nil {
+			s.cfg.Endpoint = endpoint
+			logger.Info("STUN discovered endpoint",
+				"component", "nat",
+				"endpoint", endpoint,
+				"nat_type", string(natType),
+			)
+		} else {
+			logger.Warn("STUN discovery failed, using local IP",
+				"component", "nat",
+				"error", err,
+			)
+		}
+		if natType == infra.NATTypeSymmetric {
+			if s.natTraversal.HasTURN() {
+				relayAddr, relayErr := s.natTraversal.AllocateRelay(ctx)
+				if relayErr == nil {
+					s.cfg.Endpoint = relayAddr
+					logger.Info("TURN relay allocated for symmetric NAT",
+						"component", "nat",
+						"relay_addr", relayAddr,
+					)
+				} else {
+					logger.Warn("TURN relay allocation failed",
+						"component", "nat",
+						"error", relayErr,
+					)
+				}
+			} else {
+				logger.Warn("symmetric NAT detected — no TURN configured, P2P may fail",
+					"component", "nat",
+				)
+			}
+		}
+	}
+
+	// 3. Join via signaling server (with correct public key)
 	joinResp, err := s.sigClient.JoinRoom(ctx, infra.SignalingJoinRequest{
 		InviteCode: inviteCode,
 		PeerID:     s.cfg.LocalPeerID,
@@ -217,20 +306,20 @@ func (s *RealRoomService) Join(ctx context.Context, inviteCode string, resources
 		return nil, fmt.Errorf("signaling join: %w", err)
 	}
 
-	// 3. Add existing peers to WireGuard config
+	// 4. Add existing peers to WireGuard config
 	for _, p := range joinResp.Peers {
 		if err := s.wgManager.AddPeer(p.PublicKey, p.Endpoint, p.MeshIP); err != nil {
 			logger.Warn("failed to add peer to wireguard", "peer", p.ID, "error", err)
 		}
 	}
 
-	// 4. Write WireGuard config and bring up mesh
+	// 5. Write WireGuard config and bring up mesh
 	if _, err := s.wgManager.WriteConfig(); err != nil {
 		logger.Warn("failed to write wireguard config", "error", err)
 	}
 	s.bringUpMesh()
 
-	// 5. Register peers in peer registry and perform handshakes
+	// 6. Register peers in peer registry and perform handshakes
 	roomPeers := make([]models.Peer, 0, len(joinResp.Peers)+1)
 	for _, p := range joinResp.Peers {
 		// Extract IP from mesh IP (remove CIDR suffix)
@@ -288,9 +377,8 @@ func (s *RealRoomService) Join(ctx context.Context, inviteCode string, resources
 		IsHost:    false,
 	})
 
-	// 6. Build room
-	s.startAt = time.Now()
-	s.room = &models.Room{
+	// 7. Build room
+	room := &models.Room{
 		ID:          joinResp.RoomID,
 		InviteCode:  inviteCode,
 		ModelID:     joinResp.ModelID,
@@ -305,15 +393,21 @@ func (s *RealRoomService) Join(ctx context.Context, inviteCode string, resources
 
 	// Detect host from peers
 	for _, p := range joinResp.Peers {
-		// First peer is typically the host
-		s.room.HostID = p.ID
+		room.HostID = p.ID
 		break
 	}
 
-	assignLayers(s.room)
+	assignLayers(room)
+
+	rc := &roomContext{
+		room:         room,
+		startAt:      time.Now(),
+		peerRegistry: s.peerRegistry,
+	}
+	s.rooms[joinResp.RoomID] = rc
 
 	// Start resilience service
-	s.startResilience()
+	s.startResilienceForRoom(rc)
 
 	logger.Info("joined room",
 		"room_id", joinResp.RoomID,
@@ -321,63 +415,66 @@ func (s *RealRoomService) Join(ctx context.Context, inviteCode string, resources
 		"peers", len(roomPeers),
 	)
 
-	return s.room, nil
+	return room, nil
 }
 
-func (s *RealRoomService) Leave(ctx context.Context) error {
+func (s *RealRoomService) Leave(ctx context.Context, roomID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.room == nil {
+	rc, ok := s.rooms[roomID]
+	if !ok {
 		return models.ErrNotInRoom
 	}
 
 	// Notify signaling server
-	if err := s.sigClient.LeaveRoom(ctx, s.room.InviteCode, s.cfg.LocalPeerID); err != nil {
+	if err := s.sigClient.LeaveRoom(ctx, rc.room.InviteCode, s.cfg.LocalPeerID); err != nil {
 		logger.Warn("failed to notify signaling on leave", "error", err)
 	}
 
-	s.cleanup(ctx)
+	s.cleanupRoom(roomID)
 	return nil
 }
 
-func (s *RealRoomService) Stop(ctx context.Context) error {
+func (s *RealRoomService) Stop(ctx context.Context, roomID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.room == nil {
+	rc, ok := s.rooms[roomID]
+	if !ok {
 		return models.ErrNotInRoom
 	}
 
-	s.room.State = models.RoomStateClosed
+	rc.room.State = models.RoomStateClosed
 
 	// Notify signaling server
-	if err := s.sigClient.LeaveRoom(ctx, s.room.InviteCode, s.cfg.LocalPeerID); err != nil {
+	if err := s.sigClient.LeaveRoom(ctx, rc.room.InviteCode, s.cfg.LocalPeerID); err != nil {
 		logger.Warn("failed to notify signaling on stop", "error", err)
 	}
 
-	s.cleanup(ctx)
+	s.cleanupRoom(roomID)
 	return nil
 }
 
-func (s *RealRoomService) Status(_ context.Context) (*models.RoomStatus, error) {
+func (s *RealRoomService) Status(_ context.Context, roomID string) (*models.RoomStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.room == nil {
+	rc, ok := s.rooms[roomID]
+	if !ok {
 		return nil, models.ErrNotInRoom
 	}
 
 	var totalVRAM, usedVRAM int64
-	for _, p := range s.room.Peers {
+	for _, p := range rc.room.Peers {
 		totalVRAM += p.Resources.VRAMTotal
 		usedVRAM += p.Resources.VRAMTotal - p.Resources.VRAMFree
 	}
 
-	uptime := time.Since(s.startAt).Round(time.Second).String()
+	uptime := time.Since(rc.startAt).Round(time.Second).String()
 
 	return &models.RoomStatus{
-		Room:         *s.room,
+		Room:         *rc.room,
 		TotalVRAM:    totalVRAM,
 		UsedVRAM:     usedVRAM,
 		TokensPerSec: 0, // populated by inference service
@@ -388,20 +485,56 @@ func (s *RealRoomService) Status(_ context.Context) (*models.RoomStatus, error) 
 func (s *RealRoomService) CurrentRoom() *models.Room {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.room
+
+	for _, rc := range s.rooms {
+		if rc.room.State == models.RoomStateActive || rc.room.State == models.RoomStatePending {
+			return rc.room
+		}
+	}
+	return nil
+}
+
+func (s *RealRoomService) GetRoom(roomID string) *models.Room {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if rc, ok := s.rooms[roomID]; ok {
+		return rc.room
+	}
+	return nil
+}
+
+func (s *RealRoomService) ListRooms() []*models.Room {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rooms := make([]*models.Room, 0, len(s.rooms))
+	for _, rc := range s.rooms {
+		rooms = append(rooms, rc.room)
+	}
+	return rooms
+}
+
+func (s *RealRoomService) ActiveRoomID() string {
+	room := s.CurrentRoom()
+	if room != nil {
+		return room.ID
+	}
+	return ""
 }
 
 // addPeerToRoom is called when a remote peer completes handshake (host side).
-func (s *RealRoomService) addPeerToRoom(peerID string, resources *workerpb.ResourceUsage) {
+func (s *RealRoomService) addPeerToRoom(roomID, peerID string, resources *workerpb.ResourceUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.room == nil {
+	rc, ok := s.rooms[roomID]
+	if !ok {
 		return
 	}
 
 	// Check if peer already exists
-	for _, p := range s.room.Peers {
+	for _, p := range rc.room.Peers {
 		if p.ID == peerID {
 			return
 		}
@@ -418,7 +551,7 @@ func (s *RealRoomService) addPeerToRoom(peerID string, resources *workerpb.Resou
 		}
 	}
 
-	s.room.Peers = append(s.room.Peers, models.Peer{
+	rc.room.Peers = append(rc.room.Peers, models.Peer{
 		ID:        peerID,
 		Name:      peerID,
 		IP:        "",
@@ -429,46 +562,48 @@ func (s *RealRoomService) addPeerToRoom(peerID string, resources *workerpb.Resou
 	})
 
 	// Re-check if room can become active
-	if s.room.State == models.RoomStatePending {
+	if rc.room.State == models.RoomStatePending {
 		var totalVRAM int64
-		for _, p := range s.room.Peers {
+		for _, p := range rc.room.Peers {
 			totalVRAM += p.Resources.TotalUsableVRAM()
 		}
-		modelReqs := catalog.Lookup(s.room.ModelID)
+		modelReqs := catalog.Lookup(rc.room.ModelID)
 		if modelReqs != nil && totalVRAM >= modelReqs.MinVRAMMB {
-			s.room.State = models.RoomStateActive
-			if s.pendingTimer != nil {
-				s.pendingTimer.Stop()
-				s.pendingTimer = nil
+			rc.room.State = models.RoomStateActive
+			if rc.pendingTimer != nil {
+				rc.pendingTimer.Stop()
+				rc.pendingTimer = nil
 			}
-			s.startResilience()
+			s.startResilienceForRoom(rc)
 		}
 	}
 
-	assignLayers(s.room)
+	assignLayers(rc.room)
 
 	// Register peer in resilience monitoring
-	if s.resilience != nil {
-		s.resilience.RegisterPeer(peerID)
+	if rc.resilience != nil {
+		rc.resilience.RegisterPeer(peerID)
 	}
 
 	logger.Info("peer added to room via handshake",
+		"room_id", roomID,
 		"peer_id", peerID,
-		"total_peers", len(s.room.Peers),
+		"total_peers", len(rc.room.Peers),
 	)
 }
 
 // getRoomStateProto returns the current room state for the PeerGRPCServer.
-func (s *RealRoomService) getRoomStateProto() *peerpb.RoomState {
+func (s *RealRoomService) getRoomStateProto(roomID string) *peerpb.RoomState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.room == nil {
+	rc, ok := s.rooms[roomID]
+	if !ok {
 		return nil
 	}
 
-	assignments := make([]*peerpb.PeerAssignment, 0, len(s.room.Peers))
-	for _, p := range s.room.Peers {
+	assignments := make([]*peerpb.PeerAssignment, 0, len(rc.room.Peers))
+	for _, p := range rc.room.Peers {
 		layers := make([]int32, len(p.Layers))
 		for i, l := range p.Layers {
 			layers[i] = int32(l)
@@ -481,52 +616,65 @@ func (s *RealRoomService) getRoomStateProto() *peerpb.RoomState {
 	}
 
 	return &peerpb.RoomState{
-		ModelId:     s.room.ModelID,
-		TotalLayers: int32(s.room.TotalLayers),
+		ModelId:     rc.room.ModelID,
+		TotalLayers: int32(rc.room.TotalLayers),
 		Assignments: assignments,
 	}
 }
 
-// cleanup tears down all networking resources. Must be called with mu held.
-func (s *RealRoomService) cleanup(_ context.Context) {
-	if s.pendingTimer != nil {
-		s.pendingTimer.Stop()
-		s.pendingTimer = nil
-	}
-
-	if s.resilience != nil {
-		s.resilience.Stop()
-		s.resilience = nil
-	}
-
-	if s.peerRegistry != nil {
-		s.peerRegistry.Close()
-	}
-
-	if s.peerServer != nil {
-		s.peerServer.Stop()
-		s.peerServer = nil
-	}
-
-	// Bring down WireGuard mesh (Linux only)
-	s.bringDownMesh()
-
-	s.room = nil
-}
-
-// startResilience initializes health monitoring for all remote peers.
-func (s *RealRoomService) startResilience() {
-	if s.peerRegistry == nil {
+// cleanupRoom tears down networking resources for a specific room. Must be called with mu held.
+func (s *RealRoomService) cleanupRoom(roomID string) {
+	rc, ok := s.rooms[roomID]
+	if !ok {
 		return
 	}
 
-	s.resilience = NewResilienceService(s, s.peerRegistry, s.cfg.LocalPeerID)
-	s.resilience.Start()
+	if rc.pendingTimer != nil {
+		rc.pendingTimer.Stop()
+		rc.pendingTimer = nil
+	}
+
+	if rc.resilience != nil {
+		rc.resilience.Stop()
+		rc.resilience = nil
+	}
+
+	if rc.peerRegistry != nil {
+		rc.peerRegistry.Close()
+	}
+
+	if rc.peerServer != nil {
+		rc.peerServer.Stop()
+		rc.peerServer = nil
+	}
+
+	delete(s.rooms, roomID)
+
+	// Only tear down shared resources if no rooms remain
+	if len(s.rooms) == 0 {
+		// Deallocate TURN relay if active
+		if s.natTraversal != nil {
+			_ = s.natTraversal.DeallocateRelay(context.Background())
+		}
+
+		// Bring down WireGuard mesh (Linux only)
+		s.bringDownMesh()
+	}
+}
+
+// startResilienceForRoom initializes health monitoring for all remote peers in a room.
+func (s *RealRoomService) startResilienceForRoom(rc *roomContext) {
+	if rc.peerRegistry == nil {
+		return
+	}
+
+	rc.resilience = NewResilienceService(s, rc.peerRegistry, s.cfg.LocalPeerID)
+	rc.resilience.Start()
 
 	// Register all remote peers for monitoring
-	for _, p := range s.room.Peers {
+	for _, p := range rc.room.Peers {
 		if p.ID != s.cfg.LocalPeerID {
-			s.resilience.RegisterPeer(p.ID)
+			rc.resilience.RegisterPeer(p.ID)
 		}
 	}
 }
@@ -537,9 +685,6 @@ func (s *RealRoomService) bringUpMesh() {
 		logger.Info("skipping wg-quick up (non-linux)", "os", runtime.GOOS)
 		return
 	}
-	// In production Linux environments, this would call:
-	// exec.Command("wg-quick", "up", "hm0")
-	// Skipped for now — Docker networking handles routing between containers
 	logger.Info("wireguard mesh config written (wg-quick up skipped in container)")
 }
 

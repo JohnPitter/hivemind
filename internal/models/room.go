@@ -82,12 +82,18 @@ type RoomStatus struct {
 
 // DistributedStats holds metrics for distributed tensor inference.
 type DistributedStats struct {
-	PeerCount        int     `json:"peer_count"`
-	TotalLayers      int     `json:"total_layers"`
-	AvgLatencyMs     float64 `json:"avg_latency_ms"`
-	TensorTransfers  int64   `json:"tensor_transfers"`
-	BytesTransferred int64   `json:"bytes_transferred"`
-	CompressionRatio float64 `json:"compression_ratio"`
-	ForwardPassAvgMs float64 `json:"forward_pass_avg_ms"`
-	IsDistributed    bool    `json:"is_distributed"`
+	PeerCount          int     `json:"peer_count"`
+	TotalLayers        int     `json:"total_layers"`
+	AvgLatencyMs       float64 `json:"avg_latency_ms"`
+	TensorTransfers    int64   `json:"tensor_transfers"`
+	BytesTransferred   int64   `json:"bytes_transferred"`
+	CompressionRatio   float64 `json:"compression_ratio"`
+	ForwardPassAvgMs   float64 `json:"forward_pass_avg_ms"`
+	IsDistributed      bool    `json:"is_distributed"`
+	TokensGenerated    int64   `json:"tokens_generated"`
+	TokensPerSecond    float64 `json:"tokens_per_second"`
+	AvgTokenLatencyMs  float64 `json:"avg_token_latency_ms"`
+	EmbedAvgMs         float64 `json:"embed_avg_ms"`
+	SampleAvgMs        float64 `json:"sample_avg_ms"`
+	GenerationRequests int64   `json:"generation_requests"`
 }

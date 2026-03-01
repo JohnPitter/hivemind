@@ -108,18 +108,44 @@ services:
       - ALICE_URL=http://alice:8080
       - BOB_URL=http://bob:8080
 
-  # ── Real Inference: GPU + CPU Resource Pooling ───────────────────────
+  # ── Real Inference: Production-like (Signaling + GPU + CPU) ──────────
+  #
+  # Full production stack: signaling server for peer discovery,
+  # RealRoomService for room management, RealInferenceService with
+  # Python worker for GPU/CPU model inference.
+  #
+  signaling-real:
+    profiles: ["real"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["signaling", "--port", "7777"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7777/signal/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
   alice-real:
     profiles: ["real"]
     build:
       context: .
       dockerfile: Dockerfile
+    command: ["serve", "--host", "0.0.0.0"]
     environment:
+      - HIVEMIND_MOCK=false
       - HIVEMIND_API_HOST=0.0.0.0
       - HIVEMIND_API_PORT=8080
+      - HIVEMIND_SIGNALING_URL=http://signaling-real:7777
+      - HIVEMIND_PEER_ID=alice-001
+      - HIVEMIND_PEER_ENDPOINT=alice-real:51820
       - HIVEMIND_MODEL_ID=TinyLlama/TinyLlama-1.1B-Chat-v1.0
       - HIVEMIND_LOG_LEVEL=debug
       - WORKER_PORT=50051
+    depends_on:
+      signaling-real:
+        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -128,7 +154,7 @@ services:
               count: 1
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "/hivemind", "health", "--quiet"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 5s
       timeout: 10s
       retries: 30
@@ -141,15 +167,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: ["serve", "--host", "0.0.0.0"]
     environment:
+      - HIVEMIND_MOCK=false
       - HIVEMIND_API_HOST=0.0.0.0
       - HIVEMIND_API_PORT=8080
+      - HIVEMIND_SIGNALING_URL=http://signaling-real:7777
+      - HIVEMIND_PEER_ID=bob-002
+      - HIVEMIND_PEER_ENDPOINT=bob-real:51820
       - HIVEMIND_MODEL_ID=TinyLlama/TinyLlama-1.1B-Chat-v1.0
       - HIVEMIND_LOG_LEVEL=debug
       - WORKER_PORT=50051
       - CUDA_VISIBLE_DEVICES=
+    depends_on:
+      signaling-real:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "/hivemind", "health", "--quiet"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 5s
       timeout: 10s
       retries: 30
@@ -171,6 +205,7 @@ services:
     environment:
       - ALICE_URL=http://alice-real:8080
       - BOB_URL=http://bob-real:8080
+      - SIGNALING_URL=http://signaling-real:7777
 
   # ── P2P Wiring: Signaling + Alice + Bob (real mode) ──────────────────
   signaling:
@@ -178,7 +213,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["/hivemind", "signaling", "--port", "7777"]
+    command: ["signaling", "--port", "7777"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7777/signal/health"]
       interval: 2s
@@ -200,7 +235,7 @@ services:
       - HIVEMIND_PEER_ENDPOINT=alice-p2p:51820
       - HIVEMIND_LOG_LEVEL=debug
       - CUDA_VISIBLE_DEVICES=
-    command: ["/hivemind", "serve", "--host", "0.0.0.0"]
+    command: ["serve", "--host", "0.0.0.0"]
     depends_on:
       signaling:
         condition: service_healthy
@@ -225,7 +260,7 @@ services:
       - HIVEMIND_PEER_ENDPOINT=bob-p2p:51820
       - HIVEMIND_LOG_LEVEL=debug
       - CUDA_VISIBLE_DEVICES=
-    command: ["/hivemind", "serve", "--host", "0.0.0.0"]
+    command: ["serve", "--host", "0.0.0.0"]
     depends_on:
       signaling:
         condition: service_healthy
