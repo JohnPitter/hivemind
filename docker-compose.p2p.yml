@@ -1,0 +1,90 @@
+# ============================================================================
+# HiveMind P2P Wiring Test Stack
+# ============================================================================
+# Tests real distributed P2P flow: signaling → room creation → peer join →
+# layer assignment → health check. Uses real services (no mock mode).
+#
+# Usage:
+#   docker compose -f docker-compose.p2p.yml up --build
+#   make test-e2e-p2p
+# ============================================================================
+
+services:
+  # ── Signaling / Rendezvous Server ────────────────────────────────────────
+  signaling:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/hivemind", "signaling", "--port", "7777"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7777/signal/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # ── Alice (room host) ───────────────────────────────────────────────────
+  alice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_MOCK=false
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_SIGNALING_URL=http://signaling:7777
+      - HIVEMIND_PEER_ID=alice-001
+      - HIVEMIND_PEER_ENDPOINT=alice:51820
+      - HIVEMIND_LOG_LEVEL=debug
+      - CUDA_VISIBLE_DEVICES=
+    command: ["/hivemind", "serve", "--host", "0.0.0.0"]
+    depends_on:
+      signaling:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  # ── Bob (joining peer) ─────────────────────────────────────────────────
+  bob:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HIVEMIND_MOCK=false
+      - HIVEMIND_API_HOST=0.0.0.0
+      - HIVEMIND_API_PORT=8080
+      - HIVEMIND_SIGNALING_URL=http://signaling:7777
+      - HIVEMIND_PEER_ID=bob-002
+      - HIVEMIND_PEER_ENDPOINT=bob:51820
+      - HIVEMIND_LOG_LEVEL=debug
+      - CUDA_VISIBLE_DEVICES=
+    command: ["/hivemind", "serve", "--host", "0.0.0.0"]
+    depends_on:
+      signaling:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  # ── P2P Test Runner ────────────────────────────────────────────────────
+  p2p-tests:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      alice:
+        condition: service_healthy
+      bob:
+        condition: service_healthy
+    volumes:
+      - ./tests/e2e:/tests:ro
+    entrypoint: ["sh", "/tests/p2p_wiring.sh"]
+    environment:
+      - ALICE_URL=http://alice:8080
+      - BOB_URL=http://bob:8080
+      - SIGNALING_URL=http://signaling:7777

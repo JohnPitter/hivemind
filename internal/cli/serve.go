@@ -9,13 +9,14 @@ import (
 	"syscall"
 
 	"github.com/joaopedro/hivemind/internal/api"
+	"github.com/joaopedro/hivemind/internal/config"
 	"github.com/joaopedro/hivemind/internal/logger"
 	"github.com/joaopedro/hivemind/internal/services"
 	"github.com/spf13/cobra"
 )
 
 // ServeCmd creates the HTTP API server command.
-func ServeCmd(webFS fs.FS, roomSvc services.RoomService, infSvc services.InferenceService) *cobra.Command {
+func ServeCmd(webFS fs.FS, roomSvc services.RoomService, infSvc services.InferenceService, cfg *config.Config) *cobra.Command {
 	var host string
 	var port int
 
@@ -24,7 +25,7 @@ func ServeCmd(webFS fs.FS, roomSvc services.RoomService, infSvc services.Inferen
 		Short: "Start the HTTP API server",
 		Long:  "Launch the HiveMind API server with OpenAI-compatible endpoints, web dashboard, and health monitoring.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			srv := api.NewServer(port, webFS, roomSvc, infSvc)
+			srv := api.NewServer(port, webFS, roomSvc, infSvc, cfg)
 
 			addr := fmt.Sprintf("%s:%d", host, port)
 

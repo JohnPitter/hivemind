@@ -7,26 +7,11 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/joaopedro/hivemind/internal/catalog"
 	"github.com/joaopedro/hivemind/internal/models"
 	"github.com/joaopedro/hivemind/internal/services"
 	"github.com/spf13/cobra"
 )
-
-// Popular models for the selection menu.
-var popularModels = []struct {
-	ID       string
-	Name     string
-	Size     string
-	Type     models.ModelType
-	MinVRAM  string
-}{
-	{"meta-llama/Llama-3-70B", "Llama 3 70B", "70B params", models.ModelTypeLLM, "~40GB total"},
-	{"meta-llama/Llama-3-8B", "Llama 3 8B", "8B params", models.ModelTypeLLM, "~6GB total"},
-	{"mistralai/Mixtral-8x7B", "Mixtral 8x7B", "47B params", models.ModelTypeLLM, "~28GB total"},
-	{"google/gemma-2-27b", "Gemma 2 27B", "27B params", models.ModelTypeLLM, "~18GB total"},
-	{"stabilityai/stable-diffusion-xl", "Stable Diffusion XL", "3.5B params", models.ModelTypeDiffusion, "~8GB total"},
-	{"black-forest-labs/FLUX.1-dev", "FLUX.1 Dev", "12B params", models.ModelTypeDiffusion, "~12GB total"},
-}
 
 func createCmd(roomSvc services.RoomService) *cobra.Command {
 	var modelID string
@@ -50,13 +35,10 @@ func createCmd(roomSvc services.RoomService) *cobra.Command {
 				return fmt.Errorf("no model selected")
 			}
 
-			// Determine model type
+			// Determine model type from catalog
 			modelType := models.ModelTypeLLM
-			for _, m := range popularModels {
-				if m.ID == modelID {
-					modelType = m.Type
-					break
-				}
+			if m := catalog.Lookup(modelID); m != nil {
+				modelType = m.Type
 			}
 
 			// Max peers
@@ -80,6 +62,11 @@ func createCmd(roomSvc services.RoomService) *cobra.Command {
 			// Display room info
 			renderRoomCreated(room)
 
+			// Warn if room is pending due to insufficient resources
+			if room.State == models.RoomStatePending {
+				renderPendingWarning(room)
+			}
+
 			return nil
 		},
 	}
@@ -90,35 +77,86 @@ func createCmd(roomSvc services.RoomService) *cobra.Command {
 	return cmd
 }
 
+// modelTypeOrder defines the display order for model type groups.
+var modelTypeOrder = []models.ModelType{
+	models.ModelTypeLLM,
+	models.ModelTypeCode,
+	models.ModelTypeDiffusion,
+	models.ModelTypeMultimodal,
+	models.ModelTypeEmbedding,
+}
+
+// modelTypeColors maps each model type to a display color.
+var modelTypeColors = map[models.ModelType]lipgloss.Color{
+	models.ModelTypeLLM:        ColorInfo,
+	models.ModelTypeCode:       ColorSuccess,
+	models.ModelTypeDiffusion:  ColorSecondary,
+	models.ModelTypeMultimodal: ColorWarning,
+	models.ModelTypeEmbedding:  ColorMuted,
+}
+
 func interactiveModelSelect() string {
+	allModels := catalog.All()
+
+	// Group models by type preserving catalog order within each group.
+	groups := make(map[models.ModelType][]catalog.ModelRequirements)
+	for _, m := range allModels {
+		groups[m.Type] = append(groups[m.Type], m)
+	}
+
 	fmt.Println(BoldStyle.Render("Select a model:"))
 	fmt.Println()
 
-	for i, m := range popularModels {
-		typeTag := lipgloss.NewStyle().
-			Foreground(ColorInfo).
-			Render(strings.ToUpper(string(m.Type)))
+	// Flat index for user selection.
+	var indexed []catalog.ModelRequirements
+	num := 1
 
-		num := lipgloss.NewStyle().
-			Foreground(ColorPrimary).
+	for _, mt := range modelTypeOrder {
+		modelsInGroup := groups[mt]
+		if len(modelsInGroup) == 0 {
+			continue
+		}
+
+		color, ok := modelTypeColors[mt]
+		if !ok {
+			color = ColorInfo
+		}
+
+		header := lipgloss.NewStyle().
 			Bold(true).
-			Render(fmt.Sprintf("  [%d]", i+1))
+			Foreground(color).
+			Render("  ── " + strings.ToUpper(string(mt)) + " ──")
+		fmt.Println(header)
 
-		name := BoldStyle.Render(m.Name)
-		size := DimStyle.Render(fmt.Sprintf("(%s, %s)", m.Size, m.MinVRAM))
+		for _, m := range modelsInGroup {
+			tag := lipgloss.NewStyle().
+				Foreground(color).
+				Render(strings.ToUpper(string(m.Type)))
 
-		fmt.Printf("%s %s %s %s\n", num, typeTag, name, size)
+			numStr := lipgloss.NewStyle().
+				Foreground(ColorPrimary).
+				Bold(true).
+				Render(fmt.Sprintf("  [%d]", num))
+
+			name := BoldStyle.Render(m.Name)
+			vramStr := FormatVRAM(m.MinVRAMMB)
+			size := DimStyle.Render(fmt.Sprintf("(%s, %s)", m.ParameterSize, vramStr))
+
+			fmt.Printf("%s %s %s %s\n", numStr, tag, name, size)
+			indexed = append(indexed, m)
+			num++
+		}
+		fmt.Println()
 	}
 
-	fmt.Println()
-	customNum := len(popularModels) + 1
+	customNum := len(indexed) + 1
 	fmt.Printf("  %s %s\n",
 		HighlightStyle.Render(fmt.Sprintf("[%d]", customNum)),
 		DimStyle.Render("Enter custom model ID"),
 	)
 
 	fmt.Println()
-	fmt.Print(LabelStyle.Render("  Choose (1-"+strconv.Itoa(customNum)+"): "))
+	fmt.Print(LabelStyle.Render("  Choose (1-" + strconv.Itoa(customNum) + "): "))
 
 	var input string
 	fmt.Scanln(&input)
@@ -135,7 +173,7 @@ func interactiveModelSelect() string {
 		return strings.TrimSpace(input)
 	}
 
-	return popularModels[choice-1].ID
+	return indexed[choice-1].ID
 }
 
 func renderRoomCreated(room *models.Room) {
@@ -170,5 +208,44 @@ func renderRoomCreated(room *models.Room) {
 
 	fmt.Println()
 	fmt.Println(SuccessBoxStyle.Render(content))
+	fmt.Println()
+}
+
+func renderPendingWarning(room *models.Room) {
+	modelReqs := catalog.Lookup(room.ModelID)
+	if modelReqs == nil {
+		return
+	}
+
+	var hostVRAM int64
+	for _, p := range room.Peers {
+		hostVRAM += p.Resources.TotalUsableVRAM()
+	}
+
+	deficit := modelReqs.MinVRAMMB - hostVRAM
+	deficitStr := FormatVRAM(deficit)
+	requiredStr := FormatVRAM(modelReqs.MinVRAMMB)
+	availStr := FormatVRAM(hostVRAM)
+
+	warning := fmt.Sprintf(
+		"%s\n\n"+
+			"%s %s requires %s VRAM but you only have %s available.\n"+
+			"%s Waiting 5 minutes for peers to contribute %s.\n",
+		HighlightStyle.Render("⚠ Insufficient resources — room is PENDING"),
+		LabelStyle.Render("Model"), ValueStyle.Render(modelReqs.Name),
+		requiredStr, availStr,
+		LabelStyle.Render("Status:"), deficitStr,
+	)
+
+	if suggested := catalog.SuggestLargestFitting(hostVRAM); suggested != nil && suggested.ID != room.ModelID {
+		warning += fmt.Sprintf(
+			"%s You could run %s (%s) with your current resources.\n",
+			LabelStyle.Render("Suggestion:"),
+			ValueStyle.Render(suggested.Name),
+			FormatVRAM(suggested.MinVRAMMB),
+		)
+	}
+
+	fmt.Println(WarningBoxStyle.Render(warning))
 	fmt.Println()
 }

@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"fmt"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Color palette
 var (
@@ -53,6 +57,11 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorDanger).
 			Padding(1, 2)
+
+	WarningBoxStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(ColorWarning).
+				Padding(1, 2)
 
 	// Labels
 	LabelStyle = lipgloss.NewStyle().
@@ -113,6 +122,18 @@ func Logo() string {
   ██║ ╚═╝ ██║██║██║ ╚████║██████╔╝
   ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝`
 	return LogoStyle.Render(logo)
+}
+
+// FormatVRAM formats VRAM in MB to a human-readable string (MB or GB).
+func FormatVRAM(mb int64) string {
+	if mb >= 1024 {
+		gb := float64(mb) / 1024.0
+		if gb == float64(int64(gb)) {
+			return fmt.Sprintf("~%dGB", int64(gb))
+		}
+		return fmt.Sprintf("~%.1fGB", gb)
+	}
+	return fmt.Sprintf("~%dMB", mb)
 }
 
 // StatusIndicator returns a colored status dot.

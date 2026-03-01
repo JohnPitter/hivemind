@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/joaopedro/hivemind/internal/catalog"
 	"github.com/joaopedro/hivemind/internal/models"
 	"github.com/joaopedro/hivemind/internal/services"
 )
@@ -20,10 +21,11 @@ func NewRoomHandler(roomSvc services.RoomService) *RoomHandler {
 
 // CreateRequest holds parameters for creating a room.
 type CreateRequest struct {
-	ModelID     string          `json:"model_id"`
-	ModelType   models.ModelType `json:"model_type"`
-	MaxPeers    int             `json:"max_peers"`
-	AutoApprove bool            `json:"auto_approve"`
+	ModelID     string               `json:"model_id"`
+	ModelType   models.ModelType     `json:"model_type"`
+	MaxPeers    int                  `json:"max_peers"`
+	AutoApprove bool                 `json:"auto_approve"`
+	Resources   *models.ResourceSpec `json:"resources,omitempty"`
 }
 
 // JoinRequest holds parameters for joining a room.
@@ -45,11 +47,19 @@ func (h *RoomHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-fill ModelType from catalog if not provided
+	if req.ModelType == "" {
+		if m := catalog.Lookup(req.ModelID); m != nil {
+			req.ModelType = m.Type
+		}
+	}
+
 	cfg := models.RoomConfig{
 		ModelID:     req.ModelID,
 		ModelType:   req.ModelType,
 		MaxPeers:    req.MaxPeers,
 		AutoApprove: req.AutoApprove,
+		Resources:   req.Resources,
 	}
 
 	room, err := h.roomSvc.Create(r.Context(), cfg)
@@ -58,7 +68,40 @@ func (h *RoomHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, room)
+	resp := models.CreateRoomResponse{
+		Room: room,
+	}
+
+	// Build resource check if model is in catalog
+	if modelReqs := catalog.Lookup(room.ModelID); modelReqs != nil {
+		var totalVRAM int64
+		for _, p := range room.Peers {
+			totalVRAM += p.Resources.TotalUsableVRAM()
+		}
+
+		check := &models.ResourceCheckResult{
+			Sufficient:     totalVRAM >= modelReqs.MinVRAMMB,
+			TotalVRAMMB:    totalVRAM,
+			RequiredVRAMMB: modelReqs.MinVRAMMB,
+			PeerCount:      len(room.Peers),
+		}
+
+		if !check.Sufficient {
+			check.DeficitMB = modelReqs.MinVRAMMB - totalVRAM
+			if suggested := catalog.SuggestLargestFitting(totalVRAM); suggested != nil {
+				check.SuggestedModelID = suggested.ID
+				check.SuggestedModel = suggested.Name
+			}
+		}
+
+		resp.ResourceCheck = check
+	}
+
+	if room.State == models.RoomStatePending {
+		resp.PendingTimeout = 300
+	}
+
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // Join handles POST /room/join.

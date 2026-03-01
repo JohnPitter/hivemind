@@ -62,6 +62,10 @@ func handleServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "not_host", err.Error())
 	case errors.Is(err, models.ErrInsufficientVRAM):
 		writeError(w, http.StatusUnprocessableEntity, "insufficient_vram", err.Error())
+	case errors.Is(err, models.ErrModelNotInCatalog):
+		writeError(w, http.StatusNotFound, "model_not_in_catalog", err.Error())
+	case errors.Is(err, models.ErrRoomPendingTimeout):
+		writeError(w, http.StatusGone, "room_pending_timeout", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "an unexpected error occurred")
 	}

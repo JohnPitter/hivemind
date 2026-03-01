@@ -7,6 +7,7 @@ type RoomState string
 
 const (
 	RoomStateCreating RoomState = "creating"
+	RoomStatePending  RoomState = "pending"
 	RoomStateActive   RoomState = "active"
 	RoomStatePaused   RoomState = "paused"
 	RoomStateClosed   RoomState = "closed"
@@ -30,8 +31,11 @@ type Room struct {
 type ModelType string
 
 const (
-	ModelTypeLLM       ModelType = "llm"
-	ModelTypeDiffusion ModelType = "diffusion"
+	ModelTypeLLM        ModelType = "llm"
+	ModelTypeDiffusion  ModelType = "diffusion"
+	ModelTypeCode       ModelType = "code"
+	ModelTypeEmbedding  ModelType = "embedding"
+	ModelTypeMultimodal ModelType = "multimodal"
 )
 
 // PeerState represents a peer's connection state.
@@ -59,10 +63,11 @@ type Peer struct {
 
 // RoomConfig holds settings for creating a new room.
 type RoomConfig struct {
-	ModelID     string    `json:"model_id"`
-	ModelType   ModelType `json:"model_type"`
-	MaxPeers    int       `json:"max_peers"`
-	AutoApprove bool      `json:"auto_approve"`
+	ModelID     string        `json:"model_id"`
+	ModelType   ModelType     `json:"model_type"`
+	MaxPeers    int           `json:"max_peers"`
+	AutoApprove bool          `json:"auto_approve"`
+	Resources   *ResourceSpec `json:"resources,omitempty"`
 }
 
 // RoomStatus holds real-time room status for API/CLI display.

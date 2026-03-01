@@ -162,7 +162,7 @@ check_status "Room created successfully" "201" "$status"
 check_contains "Response has invite_code" "$body" '"invite_code"'
 check_contains "Response has room ID" "$body" '"id"'
 check_contains "Model ID matches request" "$body" '"model_id":"meta-llama/Llama-3-70B"'
-check_contains "Room state is active" "$body" '"state":"active"'
+check_contains "Room state is pending (host VRAM insufficient for 70B)" "$body" '"state":"pending"'
 check_contains "Host peer exists" "$body" '"is_host":true'
 check_contains "Has total_layers" "$body" '"total_layers"'
 check_contains "Peer has layers assigned" "$body" '"layers"'
@@ -339,7 +339,42 @@ check_contains "Model owned by hivemind" "$body" '"owned_by":"hivemind-room"'
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PHASE 9: LEAVE ROOM — Abandon the room
+# PHASE 9: CATALOG — Verify expanded catalog (20 models, 5 types)
+# ═══════════════════════════════════════════════════════════════════════════
+
+step "Expanded Catalog Verification" \
+     "Verify catalog has 20 models across 5 types"
+
+catalog_body=$(curl -sf "${API}/v1/models/catalog")
+
+check_contains "Catalog has models" "$catalog_body" '"models"'
+check_contains "Has code type" "$catalog_body" '"type":"code"'
+check_contains "Has embedding type" "$catalog_body" '"type":"embedding"'
+check_contains "Has multimodal type" "$catalog_body" '"type":"multimodal"'
+check_contains "DeepSeek 236B present" "$catalog_body" '"deepseek-ai/DeepSeek-Coder-V2-236B"'
+check_contains "Nomic Embed present" "$catalog_body" '"nomic-ai/nomic-embed-text-v1.5"'
+
+# Count models by counting parameter_size fields (unique to model entries)
+model_count=$(echo "$catalog_body" | grep -o '"parameter_size"' | wc -l)
+if [ "$model_count" -eq 20 ]; then
+    PASS=$((PASS + 1))
+    printf "    $(green '✓') Catalog has 20 models (%d)\n" "$model_count"
+else
+    FAIL=$((FAIL + 1))
+    printf "    $(red '✗') Expected 20 models, got %d\n" "$model_count"
+fi
+
+# Suggestion for high VRAM returns DeepSeek 236B
+suggest_body=$(curl -sf "${API}/v1/models/catalog?vram_mb=200000")
+check_contains "200GB VRAM suggests DeepSeek 236B" "$suggest_body" '"deepseek-ai/DeepSeek-Coder-V2-236B"'
+
+# Suggestion for 600MB returns Nomic Embed
+suggest_body=$(curl -sf "${API}/v1/models/catalog?vram_mb=600")
+check_contains "600MB VRAM suggests Nomic Embed" "$suggest_body" '"nomic-ai/nomic-embed-text-v1.5"'
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 10: LEAVE ROOM — Abandon the room
 # ═══════════════════════════════════════════════════════════════════════════
 
 step "Leave Room" \
@@ -428,11 +463,46 @@ check_contains "Has layers assigned" "$body" '"layers"'
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PHASE 12: CHAT AFTER REJOIN — Inference works in new room
+# PHASE 12: DONATION — Leave and rejoin with donation percentage
 # ═══════════════════════════════════════════════════════════════════════════
 
-step "Chat After Rejoin" \
-     "Verify inference works after rejoining a room"
+step "Rejoin with Donation Percentage" \
+     "Leave and rejoin with 75 percent resource donation"
+
+# Leave current room
+curl -sf -X DELETE "${API}/room/leave" > /dev/null 2>&1
+
+response=$(curl -s -w "\n%{http_code}" \
+    -X POST "${API}/room/join" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"invite_code\": \"${INVITE_CODE}\",
+        \"resources\": {
+            \"gpu_name\": \"NVIDIA RTX 3060\",
+            \"vram_total_mb\": 12288,
+            \"vram_free_mb\": 10240,
+            \"ram_total_mb\": 32768,
+            \"ram_free_mb\": 24576,
+            \"cuda_available\": true,
+            \"platform\": \"Linux\",
+            \"donation_pct\": 75
+        }
+    }")
+status=$(echo "$response" | tail -1)
+body=$(echo "$response" | sed '$d')
+
+check_status "Join with 75% donation returns 200" "200" "$status"
+check_contains "Donation pct preserved" "$body" '"donation_pct":75'
+check_contains "Room is active" "$body" '"state":"active"'
+check_contains "Has layers assigned" "$body" '"layers"'
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 13: CHAT AFTER DONATION REJOIN — Inference works
+# ═══════════════════════════════════════════════════════════════════════════
+
+step "Chat After Donation Rejoin" \
+     "Verify inference works after rejoining with donation"
 
 body=$(curl -sf \
     -X POST "${API}/v1/chat/completions" \

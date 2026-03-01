@@ -6,13 +6,24 @@ import { ResourceMonitor } from './components/ResourceMonitor';
 import { ChatPlayground } from './components/ChatPlayground';
 import { LayerMap } from './components/LayerMap';
 import { DistributedPanel } from './components/DistributedPanel';
-import { mockRoomStatus } from './lib/mock-data';
+import { useRoomStatus } from './hooks/useRoomStatus';
+import { leaveRoom, stopRoom } from './lib/api';
+import type { RoomStatus } from './types';
+import { Loader2, WifiOff } from 'lucide-react';
 
 type Tab = 'dashboard' | 'chat' | 'room';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
-  const status = mockRoomStatus;
+  const { status, loading, refetch } = useRoomStatus();
+
+  if (loading) {
+    return <LoadingScreen />;
+  }
+
+  if (!status) {
+    return <NoRoomScreen />;
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -50,7 +61,7 @@ export default function App() {
 
           {activeTab === 'room' && (
             <div className="max-w-2xl space-y-6">
-              <RoomInfo status={status} />
+              <RoomInfo status={status} onRefetch={refetch} />
             </div>
           )}
         </div>
@@ -59,8 +70,51 @@ export default function App() {
   );
 }
 
-function RoomInfo({ status }: { status: typeof mockRoomStatus }) {
+function LoadingScreen() {
+  return (
+    <div className="flex items-center justify-center h-screen bg-bg-primary">
+      <div className="text-center">
+        <Loader2 className="w-8 h-8 text-amber animate-spin mx-auto mb-4" />
+        <p className="text-text-secondary text-sm">Connecting to HiveMind...</p>
+      </div>
+    </div>
+  );
+}
+
+function NoRoomScreen() {
+  return (
+    <div className="flex items-center justify-center h-screen bg-bg-primary">
+      <div className="text-center max-w-md">
+        <WifiOff className="w-12 h-12 text-text-muted mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-text-primary mb-2">No Active Room</h2>
+        <p className="text-text-secondary text-sm mb-6">
+          Create or join a room to start distributed inference.
+        </p>
+        <div className="bg-bg-secondary border border-border rounded-xl p-4 text-left space-y-3">
+          <div>
+            <p className="text-text-muted text-xs mb-1">Create a room:</p>
+            <code className="text-amber text-sm">hivemind create --model meta-llama/Llama-3-70B</code>
+          </div>
+          <div>
+            <p className="text-text-muted text-xs mb-1">Join a room:</p>
+            <code className="text-amber text-sm">hivemind join &lt;invite-code&gt;</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RoomInfo({ status, onRefetch }: { status: RoomStatus; onRefetch: () => void }) {
   const { room } = status;
+
+  const handleLeave = async () => {
+    if (await leaveRoom()) onRefetch();
+  };
+
+  const handleStop = async () => {
+    if (await stopRoom()) onRefetch();
+  };
 
   return (
     <div className="space-y-6">
@@ -97,10 +151,16 @@ function RoomInfo({ status }: { status: typeof mockRoomStatus }) {
       </div>
 
       <div className="flex gap-3">
-        <button className="px-6 py-2 bg-red/10 border border-red/30 text-red rounded-lg hover:bg-red/20 transition-colors text-sm font-medium">
+        <button
+          onClick={handleLeave}
+          className="px-6 py-2 bg-red/10 border border-red/30 text-red rounded-lg hover:bg-red/20 transition-colors text-sm font-medium"
+        >
           Leave Room
         </button>
-        <button className="px-6 py-2 bg-red/10 border border-red/30 text-red rounded-lg hover:bg-red/20 transition-colors text-sm font-medium">
+        <button
+          onClick={handleStop}
+          className="px-6 py-2 bg-red/10 border border-red/30 text-red rounded-lg hover:bg-red/20 transition-colors text-sm font-medium"
+        >
           Stop Room
         </button>
       </div>
