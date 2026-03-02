@@ -54,3 +54,7 @@ coverage.out
 coverage.html
 htmlcov/
 .coverage
+
+# Claude Code
+.claude/
+CLAUDE.md
